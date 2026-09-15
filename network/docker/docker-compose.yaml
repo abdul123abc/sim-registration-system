@@ -1,0 +1,396 @@
+# network/docker/docker-compose.yaml
+# Hyperledger Fabric v2.5 network — Chapter Three, Section 3.4
+# Topology: 1 Orderer, NCC + 4 MNO orgs, each with 1 peer + CouchDB + CLI
+
+volumes:
+  orderer.example.com:
+  peer0.ncc.example.com:
+  peer0.mno1.example.com:
+  peer0.mno2.example.com:
+  peer0.mno3.example.com:
+  peer0.mno4.example.com:
+  couchdb.ncc:
+  couchdb.mno1:
+  couchdb.mno2:
+  couchdb.mno3:
+  couchdb.mno4:
+
+networks:
+  sim_net:
+    name: sim_net
+    external: true
+
+services:
+
+  # ─── Orderer ────────────────────────────────────────────────────────────────
+  orderer.example.com:
+    image: hyperledger/fabric-orderer:${FABRIC_VERSION}
+    container_name: orderer.example.com
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7050
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7053
+      - ORDERER_OPERATIONS_LISTENADDRESS=0.0.0.0:9443
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric
+    command: orderer
+    volumes:
+      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp:/var/hyperledger/orderer/msp
+      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls:/var/hyperledger/orderer/tls
+      - orderer.example.com:/var/hyperledger/production/orderer
+    ports:
+      - "7050:7050"
+      - "7053:7053"
+      - "9443:9443"
+    networks:
+      - sim_net
+
+  # ─── CouchDB — NCC ──────────────────────────────────────────────────────────
+  couchdb.ncc.example.com:
+    image: couchdb:${COUCHDB_VERSION}
+    container_name: couchdb.ncc.example.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb.ncc:/opt/couchdb/data
+    networks:
+      - sim_net
+
+  # ─── Peer — NCC ─────────────────────────────────────────────────────────────
+  peer0.ncc.example.com:
+    image: hyperledger/fabric-peer:${FABRIC_VERSION}
+    container_name: peer0.ncc.example.com
+    security_opt:
+      - label:disable
+    environment:
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=sim_net
+      - CORE_VM_DOCKER_BUILDTIMEOUT=1200s
+      - CORE_VM_DOCKER_ATTACHTIMEOUT=120s
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_PROFILE_ENABLED=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.ncc.example.com
+      - CORE_PEER_ADDRESS=peer0.ncc.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.ncc.example.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.ncc.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.ncc.example.com:7051
+      - CORE_PEER_LOCALMSPID=NCCMSP
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_OPERATIONS_LISTENADDRESS=peer0.ncc.example.com:9444
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.ncc.example.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/msp:/etc/hyperledger/fabric/msp
+      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.ncc.example.com:/var/hyperledger/production
+    ports:
+      - "7051:7051"
+    depends_on:
+      - couchdb.ncc.example.com
+    networks:
+      - sim_net
+
+  # ─── CouchDB — MNO1 (MTN) ───────────────────────────────────────────────────
+  couchdb.mno1.example.com:
+    image: couchdb:${COUCHDB_VERSION}
+    container_name: couchdb.mno1.example.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - "7984:5984"
+    volumes:
+      - couchdb.mno1:/opt/couchdb/data
+    networks:
+      - sim_net
+
+  # ─── Peer — MNO1 (MTN) ──────────────────────────────────────────────────────
+  peer0.mno1.example.com:
+    image: hyperledger/fabric-peer:${FABRIC_VERSION}
+    container_name: peer0.mno1.example.com
+    security_opt:
+      - label:disable
+    environment:
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=sim_net
+      - CORE_VM_DOCKER_BUILDTIMEOUT=1200s
+      - CORE_VM_DOCKER_ATTACHTIMEOUT=120s
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_PROFILE_ENABLED=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.mno1.example.com
+      - CORE_PEER_ADDRESS=peer0.mno1.example.com:8051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:8051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.mno1.example.com:8052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:8052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.mno1.example.com:8051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.mno1.example.com:8051
+      - CORE_PEER_LOCALMSPID=MTNMSP
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_OPERATIONS_LISTENADDRESS=peer0.mno1.example.com:9445
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.mno1.example.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/msp:/etc/hyperledger/fabric/msp
+      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.mno1.example.com:/var/hyperledger/production
+    ports:
+      - "8051:8051"
+    depends_on:
+      - couchdb.mno1.example.com
+    networks:
+      - sim_net
+
+  # ─── CouchDB — MNO2 (Airtel) ────────────────────────────────────────────────
+  couchdb.mno2.example.com:
+    image: couchdb:${COUCHDB_VERSION}
+    container_name: couchdb.mno2.example.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - "8984:5984"
+    volumes:
+      - couchdb.mno2:/opt/couchdb/data
+    networks:
+      - sim_net
+
+  # ─── Peer — MNO2 (Airtel) ───────────────────────────────────────────────────
+  peer0.mno2.example.com:
+    image: hyperledger/fabric-peer:${FABRIC_VERSION}
+    container_name: peer0.mno2.example.com
+    security_opt:
+      - label:disable
+    environment:
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=sim_net
+      - CORE_VM_DOCKER_BUILDTIMEOUT=1200s
+      - CORE_VM_DOCKER_ATTACHTIMEOUT=120s
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_PROFILE_ENABLED=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.mno2.example.com
+      - CORE_PEER_ADDRESS=peer0.mno2.example.com:9051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:9051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.mno2.example.com:9052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:9052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.mno2.example.com:9051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.mno2.example.com:9051
+      - CORE_PEER_LOCALMSPID=AIRTELMSP
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_OPERATIONS_LISTENADDRESS=peer0.mno2.example.com:9446
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.mno2.example.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/msp:/etc/hyperledger/fabric/msp
+      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.mno2.example.com:/var/hyperledger/production
+    ports:
+      - "9051:9051"
+    depends_on:
+      - couchdb.mno2.example.com
+    networks:
+      - sim_net
+
+  # ─── CouchDB — MNO3 (Glo) ───────────────────────────────────────────────────
+  couchdb.mno3.example.com:
+    image: couchdb:${COUCHDB_VERSION}
+    container_name: couchdb.mno3.example.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - "9984:5984"
+    volumes:
+      - couchdb.mno3:/opt/couchdb/data
+    networks:
+      - sim_net
+
+  # ─── Peer — MNO3 (Glo) ──────────────────────────────────────────────────────
+  peer0.mno3.example.com:
+    image: hyperledger/fabric-peer:${FABRIC_VERSION}
+    container_name: peer0.mno3.example.com
+    security_opt:
+      - label:disable
+    environment:
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=sim_net
+      - CORE_VM_DOCKER_BUILDTIMEOUT=1200s
+      - CORE_VM_DOCKER_ATTACHTIMEOUT=120s
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_PROFILE_ENABLED=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.mno3.example.com
+      - CORE_PEER_ADDRESS=peer0.mno3.example.com:10051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:10051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.mno3.example.com:10052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:10052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.mno3.example.com:10051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.mno3.example.com:10051
+      - CORE_PEER_LOCALMSPID=GLOMSP
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_OPERATIONS_LISTENADDRESS=peer0.mno3.example.com:9447
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.mno3.example.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/msp:/etc/hyperledger/fabric/msp
+      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.mno3.example.com:/var/hyperledger/production
+    ports:
+      - "10051:10051"
+    depends_on:
+      - couchdb.mno3.example.com
+    networks:
+      - sim_net
+
+  # ─── CouchDB — MNO4 (NineMobile) ────────────────────────────────────────────
+  couchdb.mno4.example.com:
+    image: couchdb:${COUCHDB_VERSION}
+    container_name: couchdb.mno4.example.com
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    ports:
+      - "10984:5984"
+    volumes:
+      - couchdb.mno4:/opt/couchdb/data
+    networks:
+      - sim_net
+
+  # ─── Peer — MNO4 (NineMobile) ───────────────────────────────────────────────
+  peer0.mno4.example.com:
+    image: hyperledger/fabric-peer:${FABRIC_VERSION}
+    container_name: peer0.mno4.example.com
+    security_opt:
+      - label:disable
+    environment:
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=sim_net
+      - CORE_VM_DOCKER_BUILDTIMEOUT=1200s
+      - CORE_VM_DOCKER_ATTACHTIMEOUT=120s
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_PROFILE_ENABLED=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.mno4.example.com
+      - CORE_PEER_ADDRESS=peer0.mno4.example.com:11051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:11051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.mno4.example.com:11052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:11052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.mno4.example.com:11051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.mno4.example.com:11051
+      - CORE_PEER_LOCALMSPID=NINEMOBILEMSP
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_OPERATIONS_LISTENADDRESS=peer0.mno4.example.com:9448
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb.mno4.example.com:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: peer node start
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/msp:/etc/hyperledger/fabric/msp
+      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.mno4.example.com:/var/hyperledger/production
+    ports:
+      - "11051:11051"
+    depends_on:
+      - couchdb.mno4.example.com
+    networks:
+      - sim_net
+
+  # ─── CLI container (used by scripts for channel + chaincode operations) ──────
+  cli:
+    image: hyperledger/fabric-tools:${FABRIC_VERSION}
+    container_name: sim_cli
+    security_opt:
+      - label:disable
+    tty: true
+    stdin_open: true
+    environment:
+      - GOPATH=/opt/gopath
+      - CORE_VM_ENDPOINT=unix:///var/run/docker.sock
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_ID=cli
+      - CORE_PEER_ADDRESS=peer0.ncc.example.com:7051
+      - CORE_PEER_LOCALMSPID=NCCMSP
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls/ca.crt
+      - CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/ncc.example.com/users/Admin@ncc.example.com/msp
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: /bin/bash
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - ../../chaincode:/opt/gopath/src/github.com/chaincode
+      - ../crypto-config:/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto
+      - ../channel-artifacts:/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts
+      - ../scripts:/opt/gopath/src/github.com/hyperledger/fabric/peer/scripts
+    depends_on:
+      - orderer.example.com
+      - peer0.ncc.example.com
+      - peer0.mno1.example.com
+      - peer0.mno2.example.com
+      - peer0.mno3.example.com
+      - peer0.mno4.example.com
+    networks:
+      - sim_net

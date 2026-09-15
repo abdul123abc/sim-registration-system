@@ -1,0 +1,277 @@
+# network/configtx.yaml
+# Hyperledger Fabric channel configuration.
+# Chapter Three, Section 3.4 — Network Topology and Endorsement Policy.
+#
+# ENDORSEMENT POLICIES (Section 3.4.2):
+#   Subscriber Registration: AND(NCC.peer, <submittingMNO>.peer)
+#     → Implemented as AND(NCCMSP.peer, OR(all MNO peers)) at chaincode deployment time.
+#     → DESIGN NOTE: exact per-MNO enforcement at the chaincode policy level requires
+#       state-based endorsement policies, which are set per-key after registration.
+#       The base policy is: NCC + at least one MNO must endorse. Flagged deviation.
+#
+#   Access Control changes: simple majority of MNO peers = 3-of-4
+#     → Implemented as OutOf(3, MTNMSP.peer, AIRTELMSP.peer, GLOMSP.peer, NINEMOBILEMSP.peer)
+#
+# MSP IDs:
+#   OrdererMSP, NCCMSP, MTNMSP, AIRTELMSP, GLOMSP, NINEMOBILEMSP
+
+---
+Organizations:
+
+  - &OrdererOrg
+    Name: OrdererMSP
+    ID: OrdererMSP
+    MSPDir: crypto-config/ordererOrganizations/example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+    OrdererEndpoints:
+      - orderer.example.com:7050
+
+  - &NCC
+    Name: NCCMSP
+    ID: NCCMSP
+    MSPDir: crypto-config/peerOrganizations/ncc.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('NCCMSP.admin', 'NCCMSP.peer', 'NCCMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('NCCMSP.admin', 'NCCMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('NCCMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('NCCMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.ncc.example.com
+        Port: 7051
+
+  - &MTN
+    Name: MTNMSP
+    ID: MTNMSP
+    MSPDir: crypto-config/peerOrganizations/mno1.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('MTNMSP.admin', 'MTNMSP.peer', 'MTNMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('MTNMSP.admin', 'MTNMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('MTNMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('MTNMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.mno1.example.com
+        Port: 8051
+
+  - &Airtel
+    Name: AIRTELMSP
+    ID: AIRTELMSP
+    MSPDir: crypto-config/peerOrganizations/mno2.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('AIRTELMSP.admin', 'AIRTELMSP.peer', 'AIRTELMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('AIRTELMSP.admin', 'AIRTELMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('AIRTELMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('AIRTELMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.mno2.example.com
+        Port: 9051
+
+  - &Glo
+    Name: GLOMSP
+    ID: GLOMSP
+    MSPDir: crypto-config/peerOrganizations/mno3.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('GLOMSP.admin', 'GLOMSP.peer', 'GLOMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('GLOMSP.admin', 'GLOMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('GLOMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('GLOMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.mno3.example.com
+        Port: 10051
+
+  - &NineMobile
+    Name: NINEMOBILEMSP
+    ID: NINEMOBILEMSP
+    MSPDir: crypto-config/peerOrganizations/mno4.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('NINEMOBILEMSP.admin', 'NINEMOBILEMSP.peer', 'NINEMOBILEMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('NINEMOBILEMSP.admin', 'NINEMOBILEMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('NINEMOBILEMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('NINEMOBILEMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.mno4.example.com
+        Port: 11051
+
+###############################################################################
+# Capabilities
+###############################################################################
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+
+  Orderer: &OrdererCapabilities
+    V2_0: true
+
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+###############################################################################
+# Application Defaults
+###############################################################################
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+###############################################################################
+# Orderer Defaults (single-node Raft — adequate for academic prototype)
+###############################################################################
+Orderer: &OrdererDefaults
+  OrdererType: etcdraft
+  Addresses:
+    - orderer.example.com:7050
+  EtcdRaft:
+    Consenters:
+      - Host: orderer.example.com
+        Port: 7050
+        ClientTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+  Capabilities:
+    <<: *OrdererCapabilities
+
+###############################################################################
+# Channel Defaults
+###############################################################################
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+###############################################################################
+# Profiles
+###############################################################################
+Profiles:
+
+  # Genesis block profile — used by the orderer at bootstrap
+  SimBlockchainGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities:
+        <<: *OrdererCapabilities
+    Consortiums:
+      SIMConsortium:
+        Organizations:
+          - *NCC
+          - *MTN
+          - *Airtel
+          - *Glo
+          - *NineMobile
+
+  # Channel creation profile — sim-registration-channel
+  # Chapter Three, Section 3.4: single shared channel: `sim-registration-channel`
+  # Endorsement policy: Subscriber Registration transactions require the submitting
+  # MNO + NCC; Access Control changes require a simple majority of MNO peers
+  # (see Section 3.4.2 for the exact policy — follow it precisely) join.
+  SimRegistrationChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities:
+        <<: *OrdererCapabilities
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *NCC
+        - *MTN
+        - *Airtel
+        - *Glo
+        - *NineMobile
+      Capabilities:
+        <<: *ApplicationCapabilities

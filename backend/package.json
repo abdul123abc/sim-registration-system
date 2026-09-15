@@ -1,0 +1,23 @@
+{
+  "name": "sim-blockchain-backend",
+  "version": "1.0.0",
+  "description": "Backend API — SIM Blockchain Prototype (Hyperledger Fabric + ZK + IPFS)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "@hyperledger/fabric-gateway": "^1.4.0",
+    "@grpc/grpc-js": "^1.9.0",
+    "circomlibjs": "^0.1.7",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "ipfs-http-client": "^60.0.0",
+    "snarkjs": "^0.7.3",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

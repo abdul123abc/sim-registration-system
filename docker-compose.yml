@@ -1,0 +1,72 @@
+volumes:
+  ipfs_data:
+
+services:
+  ipfs:
+    image: ipfs/kubo:v0.30.0
+    container_name: ipfs
+    environment:
+      IPFS_PROFILE: server
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+    networks:
+      - sim_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sim-backend
+    working_dir: /app
+    environment:
+      NODE_ENV: docker
+      PROJECT_ROOT: /app
+      NETWORK_DIR: /app/network
+      ZK_BUILD_DIR: /zk/build
+      PEER_ENDPOINT: peer0.ncc.example.com:7051
+      TLS_CERT_PATH: /app/network/crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls/ca.crt
+      CLIENT_CERT_PATH: /app/network/crypto-config/peerOrganizations/ncc.example.com/users/Admin@ncc.example.com/msp/signcerts/Admin@ncc.example.com-cert.pem
+      CLIENT_KEY_PATH: /app/network/crypto-config/peerOrganizations/ncc.example.com/users/Admin@ncc.example.com/msp/keystore
+      MSP_ID: NCCMSP
+      COUCHDB_URL: http://couchdb.ncc.example.com:5984
+      IPFS_API_URL: http://ipfs:5001
+      IPFS_TIMEOUT_MS: 15000
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+      - ./network:/app/network
+      - ./zk:/zk
+      - /app/node_modules
+    networks:
+      - sim_net
+    depends_on:
+      - ipfs
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sim-frontend
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      REACT_APP_API_URL: http://backend:3001
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - sim_net
+    depends_on:
+      - backend
+
+networks:
+  sim_net:
+    name: sim_net
+    external: true

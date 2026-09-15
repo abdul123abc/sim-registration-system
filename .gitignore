@@ -1,0 +1,27 @@
+# SIM Blockchain Prototype — Root .gitignore
+
+# Node
+node_modules/
+*.log
+
+# Go build artefacts
+**/vendor/
+
+# Fabric crypto material (sensitive — never commit)
+network/crypto-config/
+network/channel-artifacts/
+
+# ZK build outputs (large binary files)
+zk/build/
+zk/*.ptau
+
+# Environment files
+backend/.env
+
+# React build
+frontend/build/
+# Generated QA and runtime artifacts
+tests/*.body
+tests/*.error
+network/scripts/*-bin
+network/scripts/docker_events.log

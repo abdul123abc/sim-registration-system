@@ -1,0 +1,64 @@
+# network/crypto-config.yaml
+# Defines organisations and their cryptographic identities for the cryptogen tool.
+# Chapter Three, Section 3.4 — Network Topology.
+#
+# Organisations:
+#   Orderer: orderer.example.com
+#   NCC:     ncc.example.com        (regulator / NCC)
+#   MNO1:    mno1.example.com       (MTN)
+#   MNO2:    mno2.example.com       (Airtel)
+#   MNO3:    mno3.example.com       (Glo)
+#   MNO4:    mno4.example.com       (NineMobile)
+
+OrdererOrgs:
+  - Name: Orderer
+    Domain: example.com
+    EnableNodeOUs: true
+    Specs:
+      - Hostname: orderer
+
+PeerOrgs:
+  # ── NCC (Nigerian Communications Commission — Regulator) ──────────────────
+  - Name: NCC
+    Domain: ncc.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1          # one peer: peer0.ncc.example.com
+    Users:
+      Count: 1          # Admin user generated automatically
+
+  # ── MNO1: MTN ─────────────────────────────────────────────────────────────
+  - Name: MNO1
+    Domain: mno1.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  # ── MNO2: Airtel ──────────────────────────────────────────────────────────
+  - Name: MNO2
+    Domain: mno2.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  # ── MNO3: Glo ─────────────────────────────────────────────────────────────
+  - Name: MNO3
+    Domain: mno3.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  # ── MNO4: NineMobile ──────────────────────────────────────────────────────
+  - Name: MNO4
+    Domain: mno4.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1

@@ -3,14 +3,32 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTO_INSTALL="${AUTO_INSTALL:-true}"
+INSTALL_TOOLCHAIN="${INSTALL_TOOLCHAIN:-true}"   # set false to skip rust/circom/snarkjs build
 
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
 
-# Compose requires buildx >= 0.17.0. `docker buildx version` succeeding only
-# proves *some* buildx responded — Amazon Linux's docker package ships an old
-# bundled one (observed: 0.12.1) that runs fine but is too old for Compose's
-# build step. This checks the actual version, not just that the command runs.
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Source cargo env for the current shell (cargo installs to ~/.cargo/bin)
+ensure_cargo_on_path() {
+  if [ -f "${HOME}/.cargo/env" ]; then
+    # shellcheck disable=SC1091
+    . "${HOME}/.cargo/env"
+  fi
+  export PATH="${HOME}/.cargo/bin:${PATH}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Buildx version floor (unchanged from original)
+# ─────────────────────────────────────────────────────────────────────────────
 buildx_meets_min_version() {
   local min_version="0.17.0"
   local raw
@@ -21,6 +39,9 @@ buildx_meets_min_version() {
   [ "$(printf '%s\n%s\n' "${min_version}" "${ver}" | sort -V | head -n1)" = "${min_version}" ]
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker Compose + Buildx manual installs (unchanged from original)
+# ─────────────────────────────────────────────────────────────────────────────
 install_compose_plugin_manually() {
   local target_user="${SUDO_USER:-$USER}"
   local target_home
@@ -34,7 +55,7 @@ install_compose_plugin_manually() {
     return 0
   fi
 
-  command -v curl >/dev/null 2>&1 || fail 'curl is required to install the Docker Compose plugin manually.'
+  have curl || fail 'curl is required to install the Docker Compose plugin manually.'
 
   local arch compose_arch
   arch="$(uname -m)"
@@ -75,7 +96,7 @@ install_buildx_plugin_manually() {
     return 0
   fi
 
-  command -v curl >/dev/null 2>&1 || fail 'curl is required to install the Docker Buildx plugin manually.'
+  have curl || fail 'curl is required to install the Docker Buildx plugin manually.'
 
   local arch buildx_arch
   arch="$(uname -m)"
@@ -87,10 +108,6 @@ install_buildx_plugin_manually() {
 
   log 'Looking up latest Docker Buildx release.'
   local api_response tag
-  # Capture the full response before grepping it. Piping curl straight into
-  # `grep -m1` lets grep close the pipe as soon as it finds a match, and
-  # curl then gets a broken-pipe write error (curl: (23)) trying to send the
-  # rest of the (larger) JSON body — which, under `set -e`, kills the script.
   api_response="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest)" \
     || fail 'Could not reach GitHub to determine the latest Docker Buildx release. Check internet, DNS, proxy, or firewall settings.'
   tag="$(printf '%s' "${api_response}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
@@ -114,101 +131,175 @@ install_buildx_plugin_manually() {
   log 'Docker Buildx CLI plugin installed manually.'
 }
 
-install_linux_prerequisites() {
-  [ "${AUTO_INSTALL}" = true ] || return 0
-
-  if command -v docker >/dev/null 2>&1 && \
-     docker compose version >/dev/null 2>&1 && \
-     buildx_meets_min_version && \
-     command -v curl >/dev/null 2>&1 && \
-     command -v git >/dev/null 2>&1; then
-    log 'Docker, Compose, Buildx, curl, and Git are already installed; skipping package installation.'
-    return 0
-  fi
+# ─────────────────────────────────────────────────────────────────────────────
+# Base OS package installation (per distro)
+# Installs: docker, git, curl, ca-certificates, gcc/g++/make, nodejs+npm
+# ─────────────────────────────────────────────────────────────────────────────
+install_os_packages() {
+  local pkgs=(docker git ca-certificates)
 
   if command -v apt-get >/dev/null 2>&1; then
-    log 'Debian/Ubuntu detected. Installing Docker, Compose, curl, and Git if needed.'
-    if [ "$(id -u)" -eq 0 ]; then
-      apt-get update
-      apt-get install -y docker.io docker-compose-plugin curl git ca-certificates
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo apt-get update
-      sudo apt-get install -y docker.io docker-compose-plugin curl git ca-certificates
-    else
-      fail 'sudo is required to install Debian/Ubuntu prerequisites.'
-    fi
+    log 'Debian/Ubuntu detected. Installing Docker, Compose, curl, Git, build tools, Node.js/npm.'
+    have curl || pkgs+=(curl)
+    as_root apt-get update
+    as_root apt-get install -y "${pkgs[@]}" docker-compose-plugin \
+      build-essential nodejs npm
   elif command -v dnf >/dev/null 2>&1; then
-    log 'Red Hat/Fedora-family detected. Installing Docker, curl, and Git if needed.'
-    local as_root=()
-    if [ "$(id -u)" -eq 0 ]; then
-      as_root=()
-    elif command -v sudo >/dev/null 2>&1; then
-      as_root=(sudo)
-    else
-      fail 'sudo is required to install Red Hat-family prerequisites.'
-    fi
-
-    local pkgs=(docker git ca-certificates)
-    # Amazon Linux 2023 ships curl-minimal, which conflicts with the full
-    # curl package. curl-minimal already provides a working `curl` command,
-    # so only request the full package when no curl binary exists at all.
-    command -v curl >/dev/null 2>&1 || pkgs+=(curl)
-
-    # docker-compose-plugin is not published in Amazon Linux 2023's default
-    # repos (unlike RHEL/Fedora proper), so only request it there if present.
+    log 'Red Hat/Fedora-family detected. Installing Docker, curl, Git, build tools, Node.js/npm.'
+    have curl || pkgs+=(curl)
+    pkgs+=(gcc gcc-c++ make nodejs npm)
     if dnf list docker-compose-plugin >/dev/null 2>&1; then
       pkgs+=(docker-compose-plugin)
-      "${as_root[@]}" dnf install -y "${pkgs[@]}"
+      as_root dnf install -y "${pkgs[@]}"
     else
       log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" dnf install -y "${pkgs[@]}"
+      as_root dnf install -y "${pkgs[@]}"
       install_compose_plugin_manually
     fi
   elif command -v yum >/dev/null 2>&1; then
-    log 'YUM-based Linux detected. Installing Docker, curl, and Git if needed.'
-    local as_root=()
-    if [ "$(id -u)" -eq 0 ]; then
-      as_root=()
-    elif command -v sudo >/dev/null 2>&1; then
-      as_root=(sudo)
-    else
-      fail 'sudo is required to install YUM prerequisites.'
-    fi
-
-    local pkgs=(docker git ca-certificates)
-    command -v curl >/dev/null 2>&1 || pkgs+=(curl)
-
-    # Amazon Linux 2's yum repos don't carry docker-compose-plugin either.
+    log 'YUM-based Linux detected. Installing Docker, curl, Git, build tools, Node.js/npm.'
+    have curl || pkgs+=(curl)
+    pkgs+=(gcc gcc-c++ make nodejs npm)
     if yum list docker-compose-plugin >/dev/null 2>&1; then
       pkgs+=(docker-compose-plugin)
-      "${as_root[@]}" yum install -y "${pkgs[@]}"
+      as_root yum install -y "${pkgs[@]}"
     else
       log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" yum install -y "${pkgs[@]}"
+      as_root yum install -y "${pkgs[@]}"
       install_compose_plugin_manually
     fi
   else
-    fail 'Unsupported Linux package manager. Install Docker Engine, Compose v2, curl, and Git manually.'
+    fail 'Unsupported Linux package manager. Install Docker Engine, Compose v2, curl, Git, build tools, and Node.js manually.'
   fi
 }
 
+install_linux_prerequisites() {
+  [ "${AUTO_INSTALL}" = true ] || return 0
+
+  # Fast path: everything already present
+  if have docker && docker compose version >/dev/null 2>&1 && buildx_meets_min_version \
+     && have curl && have git && have npm && have node; then
+    log 'Docker, Compose, Buildx, curl, Git, Node.js, and npm are already installed; skipping package installation.'
+    return 0
+  fi
+
+  install_os_packages
+
+  # Verify Node/npm after install (in case distro repo shipped an old one)
+  have node || fail 'Node.js installation failed or node is not on PATH.'
+  have npm  || fail 'npm installation failed or npm is not on PATH.'
+  log "  Node.js version: $(node --version)"
+  log "  npm version:     $(npm --version)"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rust toolchain (needed to build circom)
+# ─────────────────────────────────────────────────────────────────────────────
+install_rust_toolchain() {
+  [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping Rust install.'; return 0; }
+  ensure_cargo_on_path
+  if have cargo && have rustc; then
+    log "Rust toolchain already installed (cargo $(cargo --version | awk '{print $2}'))."
+    return 0
+  fi
+  log 'Installing Rust toolchain via rustup...'
+  have curl || fail 'curl is required to install Rust.'
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile default
+  ensure_cargo_on_path
+  have cargo || fail 'Rust installation failed — cargo not found after install.'
+  log "  cargo: $(cargo --version)"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Circom (built from source, installed to ~/.cargo/bin)
+# ─────────────────────────────────────────────────────────────────────────────
+install_circom() {
+  [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping circom build.'; return 0; }
+  ensure_cargo_on_path
+  if have circom; then
+    log "circom already installed ($(circom --version 2>/dev/null | head -n1))."
+    return 0
+  fi
+  log 'Building circom from source (this takes ~3 minutes)...'
+  local build_dir
+  build_dir="$(mktemp -d)"
+  git clone --depth 1 https://github.com/iden3/circom.git "${build_dir}/circom"
+  ( cd "${build_dir}/circom" && cargo build --release && cargo install --path circom )
+  rm -rf "${build_dir}"
+  have circom || fail 'circom build failed — binary not found.'
+  log "  circom: $(circom --version 2>/dev/null | head -n1)"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SnarkJS (global npm package)
+# ─────────────────────────────────────────────────────────────────────────────
+install_snarkjs() {
+  [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping snarkjs install.'; return 0; }
+  if have snarkjs; then
+    log "snarkjs already installed ($(snarkjs --version 2>/dev/null | head -n1 || echo 'unknown'))."
+    return 0
+  fi
+  log 'Installing snarkjs globally via npm...'
+  have npm || fail 'npm is required to install snarkjs.'
+  as_root npm install -g snarkjs
+  have snarkjs || fail 'snarkjs installation failed — binary not found.'
+  log '  snarkjs installed.'
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ZK circuit artifacts (compile if missing)
+# ─────────────────────────────────────────────────────────────────────────────
+ensure_zk_artifacts() {
+  [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping ZK compile.'; return 0; }
+
+  local zk_dir="${ROOT_DIR}/zk"
+  [ -d "${zk_dir}" ] || { log 'No zk/ directory found — skipping ZK artifact compilation.'; return 0; }
+
+  local wasm="${zk_dir}/build/nin_commitment_js/nin_commitment.wasm"
+  local zkey="${zk_dir}/build/nin_commitment_final.zkey"
+  local vkey="${zk_dir}/build/verification_key.json"
+
+  if [ -s "${wasm}" ] && [ -s "${zkey}" ] && [ -s "${vkey}" ]; then
+    log 'ZK circuit artifacts already present; skipping compilation.'
+    return 0
+  fi
+
+  log 'ZK circuit artifacts missing — compiling now.'
+  have circom  || fail 'circom is required to compile the ZK circuit.'
+  have snarkjs || fail 'snarkjs is required to compile the ZK circuit.'
+
+  ( cd "${zk_dir}" && bash compile.sh )
+
+  [ -s "${wasm}" ] && [ -s "${zkey}" ] && [ -s "${vkey}" ] \
+    || fail 'ZK compilation completed but artifacts are still missing. Inspect zk/compile.sh output.'
+  log '  ZK artifacts generated.'
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main flow
+# ─────────────────────────────────────────────────────────────────────────────
 if [ "$(uname -s)" != Linux ]; then
   fail 'This is the Linux launcher. On Windows, run .\\start.ps1 from PowerShell; macOS is not supported by this launcher.'
 fi
 
 install_linux_prerequisites
-command -v docker >/dev/null 2>&1 || fail 'Docker is not installed.'
+install_rust_toolchain
+install_circom
+install_snarkjs
+ensure_zk_artifacts
+
+have docker || fail 'Docker is not installed.'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available.'
 if ! buildx_meets_min_version; then
-  log 'No sufficiently new Docker Buildx found (Amazon Linux'"'"'s docker package bundles an old one, e.g. 0.12.1, that Compose rejects); installing a current version manually.'
+  log 'No sufficiently new Docker Buildx found; installing a current version manually.'
   install_buildx_plugin_manually
   buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
 fi
 
 if ! docker info >/dev/null 2>&1; then
-  if command -v systemctl >/dev/null 2>&1 && [ "${AUTO_INSTALL}" = true ]; then
+  if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
     log 'Starting Docker service.'
-    if [ "$(id -u)" -eq 0 ]; then systemctl enable --now docker; else sudo systemctl enable --now docker; fi
+    as_root systemctl enable --now docker
   fi
 fi
 docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
@@ -227,21 +318,12 @@ fi
 
 log 'Starting Hyperledger Fabric network.'
 if [ ! -d "${ROOT_DIR}/network/crypto-config" ] || [ ! -d "${ROOT_DIR}/network/channel-artifacts" ]; then
-  # A fresh checkout has neither — they're gitignored, generated output.
-  # `network.sh up` runs generate.sh (crypto material + genesis block +
-  # anchor peer transactions), starts the Fabric containers, then creates
-  # and joins the channel. A bare `docker compose up -d` skips all of that,
-  # which is why chaincode packaging later fails looking for a
-  # channel-artifacts directory that was never created.
   log '  No crypto material / channel artifacts found — running full network bootstrap (generate + channel create/join).'
   bash "${ROOT_DIR}/network/scripts/network.sh" up
 else
   (cd "${ROOT_DIR}/network/docker" && docker compose up -d)
 fi
 log 'Building and starting application containers.'
-# Recreate app-only anonymous node_modules volumes so dependency changes cannot
-# leave a stale partial install behind. Fabric and the persistent IPFS volume
-# are not touched by this command.
 docker compose rm -sfv backend frontend >/dev/null 2>&1 || true
 docker compose up --build -d
 log 'Restoring committed chaincode services.'

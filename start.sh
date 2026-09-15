@@ -81,13 +81,20 @@ install_linux_prerequisites() {
       fail 'sudo is required to install Red Hat-family prerequisites.'
     fi
 
+    local pkgs=(docker git ca-certificates)
+    # Amazon Linux 2023 ships curl-minimal, which conflicts with the full
+    # curl package. curl-minimal already provides a working `curl` command,
+    # so only request the full package when no curl binary exists at all.
+    command -v curl >/dev/null 2>&1 || pkgs+=(curl)
+
     # docker-compose-plugin is not published in Amazon Linux 2023's default
     # repos (unlike RHEL/Fedora proper), so only request it there if present.
     if dnf list docker-compose-plugin >/dev/null 2>&1; then
-      "${as_root[@]}" dnf install -y docker docker-compose-plugin curl git ca-certificates
+      pkgs+=(docker-compose-plugin)
+      "${as_root[@]}" dnf install -y "${pkgs[@]}"
     else
       log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" dnf install -y docker curl git ca-certificates
+      "${as_root[@]}" dnf install -y "${pkgs[@]}"
       install_compose_plugin_manually
     fi
   elif command -v yum >/dev/null 2>&1; then
@@ -101,12 +108,16 @@ install_linux_prerequisites() {
       fail 'sudo is required to install YUM prerequisites.'
     fi
 
+    local pkgs=(docker git ca-certificates)
+    command -v curl >/dev/null 2>&1 || pkgs+=(curl)
+
     # Amazon Linux 2's yum repos don't carry docker-compose-plugin either.
     if yum list docker-compose-plugin >/dev/null 2>&1; then
-      "${as_root[@]}" yum install -y docker docker-compose-plugin curl git ca-certificates
+      pkgs+=(docker-compose-plugin)
+      "${as_root[@]}" yum install -y "${pkgs[@]}"
     else
       log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" yum install -y docker curl git ca-certificates
+      "${as_root[@]}" yum install -y "${pkgs[@]}"
       install_compose_plugin_manually
     fi
   else

@@ -221,7 +221,18 @@ if ! docker image inspect node:20-alpine >/dev/null 2>&1; then
 fi
 
 log 'Starting Hyperledger Fabric network.'
-(cd "${ROOT_DIR}/network/docker" && docker compose up -d)
+if [ ! -d "${ROOT_DIR}/network/crypto-config" ] || [ ! -d "${ROOT_DIR}/network/channel-artifacts" ]; then
+  # A fresh checkout has neither — they're gitignored, generated output.
+  # `network.sh up` runs generate.sh (crypto material + genesis block +
+  # anchor peer transactions), starts the Fabric containers, then creates
+  # and joins the channel. A bare `docker compose up -d` skips all of that,
+  # which is why chaincode packaging later fails looking for a
+  # channel-artifacts directory that was never created.
+  log '  No crypto material / channel artifacts found — running full network bootstrap (generate + channel create/join).'
+  bash "${ROOT_DIR}/network/scripts/network.sh" up
+else
+  (cd "${ROOT_DIR}/network/docker" && docker compose up -d)
+fi
 log 'Building and starting application containers.'
 # Recreate app-only anonymous node_modules volumes so dependency changes cannot
 # leave a stale partial install behind. Fabric and the persistent IPFS volume

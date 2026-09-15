@@ -48,14 +48,62 @@ install_compose_plugin_manually() {
   log 'Docker Compose v2 CLI plugin installed manually.'
 }
 
+install_buildx_plugin_manually() {
+  local target_user="${SUDO_USER:-$USER}"
+  local target_home
+  target_home="$(getent passwd "${target_user}" | cut -d: -f6)"
+  [ -n "${target_home}" ] || target_home="${HOME}"
+  local plugin_dir="${target_home}/.docker/cli-plugins"
+  local plugin_path="${plugin_dir}/docker-buildx"
+
+  if [ -x "${plugin_path}" ] && "${plugin_path}" version >/dev/null 2>&1; then
+    log 'Docker Buildx CLI plugin already installed manually; skipping download.'
+    return 0
+  fi
+
+  command -v curl >/dev/null 2>&1 || fail 'curl is required to install the Docker Buildx plugin manually.'
+
+  local arch buildx_arch
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64) buildx_arch=amd64 ;;
+    aarch64|arm64) buildx_arch=arm64 ;;
+    *) fail "Unsupported architecture '${arch}' for manual Docker Buildx install." ;;
+  esac
+
+  log 'Looking up latest Docker Buildx release.'
+  local tag
+  tag="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest \
+    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  [ -n "${tag}" ] || fail 'Could not determine latest Docker Buildx release version. Check internet, DNS, proxy, or firewall settings.'
+
+  log "Downloading Docker Buildx plugin ${tag} to ${plugin_path}."
+  mkdir -p "${plugin_dir}"
+  local url="https://github.com/docker/buildx/releases/download/${tag}/buildx-${tag}.linux-${buildx_arch}"
+  local attempt
+  for attempt in 1 2 3; do
+    curl -fSL "${url}" -o "${plugin_path}" && break
+    [ "${attempt}" -eq 3 ] && fail "Could not download Docker Buildx plugin from ${url}. Check internet, DNS, proxy, or firewall settings."
+  done
+  chmod +x "${plugin_path}"
+
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    chown -R "${SUDO_USER}:${SUDO_USER}" "${target_home}/.docker" 2>/dev/null || true
+  fi
+
+  "${plugin_path}" version >/dev/null 2>&1 || fail 'Docker Buildx plugin installed but failed to run.'
+  log 'Docker Buildx CLI plugin installed manually.'
+}
+
 install_linux_prerequisites() {
   [ "${AUTO_INSTALL}" = true ] || return 0
 
   if command -v docker >/dev/null 2>&1 && \
      docker compose version >/dev/null 2>&1 && \
+     docker buildx version >/dev/null 2>&1 && \
      command -v curl >/dev/null 2>&1 && \
      command -v git >/dev/null 2>&1; then
-    log 'Docker, Compose, curl, and Git are already installed; skipping package installation.'
+    log 'Docker, Compose, Buildx, curl, and Git are already installed; skipping package installation.'
     return 0
   fi
 
@@ -132,6 +180,10 @@ fi
 install_linux_prerequisites
 command -v docker >/dev/null 2>&1 || fail 'Docker is not installed.'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available.'
+if ! docker buildx version >/dev/null 2>&1; then
+  log 'Docker Buildx not found (common on Amazon Linux, whose repos lack docker-buildx-plugin); installing it manually.'
+  install_buildx_plugin_manually
+fi
 
 if ! docker info >/dev/null 2>&1; then
   if command -v systemctl >/dev/null 2>&1 && [ "${AUTO_INSTALL}" = true ]; then

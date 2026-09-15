@@ -7,6 +7,20 @@ AUTO_INSTALL="${AUTO_INSTALL:-true}"
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Compose requires buildx >= 0.17.0. `docker buildx version` succeeding only
+# proves *some* buildx responded — Amazon Linux's docker package ships an old
+# bundled one (observed: 0.12.1) that runs fine but is too old for Compose's
+# build step. This checks the actual version, not just that the command runs.
+buildx_meets_min_version() {
+  local min_version="0.17.0"
+  local raw
+  raw="$(docker buildx version 2>/dev/null)" || return 1
+  local ver
+  ver="$(printf '%s' "${raw}" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | tr -d v)"
+  [ -n "${ver}" ] || return 1
+  [ "$(printf '%s\n%s\n' "${min_version}" "${ver}" | sort -V | head -n1)" = "${min_version}" ]
+}
+
 install_compose_plugin_manually() {
   local target_user="${SUDO_USER:-$USER}"
   local target_home
@@ -56,8 +70,8 @@ install_buildx_plugin_manually() {
   local plugin_dir="${target_home}/.docker/cli-plugins"
   local plugin_path="${plugin_dir}/docker-buildx"
 
-  if [ -x "${plugin_path}" ] && "${plugin_path}" version >/dev/null 2>&1; then
-    log 'Docker Buildx CLI plugin already installed manually; skipping download.'
+  if [ -x "${plugin_path}" ] && "${plugin_path}" version >/dev/null 2>&1 && buildx_meets_min_version; then
+    log 'Docker Buildx CLI plugin already installed manually and meets the version floor; skipping download.'
     return 0
   fi
 
@@ -100,7 +114,7 @@ install_linux_prerequisites() {
 
   if command -v docker >/dev/null 2>&1 && \
      docker compose version >/dev/null 2>&1 && \
-     docker buildx version >/dev/null 2>&1 && \
+     buildx_meets_min_version && \
      command -v curl >/dev/null 2>&1 && \
      command -v git >/dev/null 2>&1; then
     log 'Docker, Compose, Buildx, curl, and Git are already installed; skipping package installation.'
@@ -180,9 +194,10 @@ fi
 install_linux_prerequisites
 command -v docker >/dev/null 2>&1 || fail 'Docker is not installed.'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available.'
-if ! docker buildx version >/dev/null 2>&1; then
-  log 'Docker Buildx not found (common on Amazon Linux, whose repos lack docker-buildx-plugin); installing it manually.'
+if ! buildx_meets_min_version; then
+  log 'No sufficiently new Docker Buildx found (Amazon Linux'"'"'s docker package bundles an old one, e.g. 0.12.1, that Compose rejects); installing a current version manually.'
   install_buildx_plugin_manually
+  buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
 fi
 
 if ! docker info >/dev/null 2>&1; then

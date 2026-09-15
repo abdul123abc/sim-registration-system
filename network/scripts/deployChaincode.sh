@@ -136,7 +136,9 @@ get_package_id() {
 import sys, json
 data = json.load(sys.stdin)
 for cc in data.get('installed_chaincodes', []):
-  if cc.get('label') == '${CC_LABEL}':
+  references = cc.get('references', {}).get('${CHANNEL_NAME}', {}).get('chaincodes', [])
+  committed = any(item.get('name') == '${CC_NAME}' and item.get('version') == '${CC_VERSION}' for item in references)
+  if cc.get('label') == '${CC_LABEL}' and committed:
         print(cc['package_id'])
         sys.exit(0)
 sys.exit(1)

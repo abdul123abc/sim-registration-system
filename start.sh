@@ -86,9 +86,14 @@ install_buildx_plugin_manually() {
   esac
 
   log 'Looking up latest Docker Buildx release.'
-  local tag
-  tag="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  local api_response tag
+  # Capture the full response before grepping it. Piping curl straight into
+  # `grep -m1` lets grep close the pipe as soon as it finds a match, and
+  # curl then gets a broken-pipe write error (curl: (23)) trying to send the
+  # rest of the (larger) JSON body — which, under `set -e`, kills the script.
+  api_response="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest)" \
+    || fail 'Could not reach GitHub to determine the latest Docker Buildx release. Check internet, DNS, proxy, or firewall settings.'
+  tag="$(printf '%s' "${api_response}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
   [ -n "${tag}" ] || fail 'Could not determine latest Docker Buildx release version. Check internet, DNS, proxy, or firewall settings.'
 
   log "Downloading Docker Buildx plugin ${tag} to ${plugin_path}."

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTO_INSTALL="${AUTO_INSTALL:-true}"
-INSTALL_TOOLCHAIN="${INSTALL_TOOLCHAIN:-true}"   # set false to skip rust/circom/snarkjs/zk build
+INSTALL_TOOLCHAIN="${INSTALL_TOOLCHAIN:-true}"   # set false to skip rust/circom/snarkjs build
 
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -27,7 +27,7 @@ ensure_cargo_on_path() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Buildx version floor
+# Buildx version floor (unchanged from original)
 # ─────────────────────────────────────────────────────────────────────────────
 buildx_meets_min_version() {
   local min_version="0.17.0"
@@ -40,7 +40,7 @@ buildx_meets_min_version() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Docker Compose + Buildx manual installs
+# Docker Compose + Buildx manual installs (unchanged from original)
 # ─────────────────────────────────────────────────────────────────────────────
 install_compose_plugin_manually() {
   local target_user="${SUDO_USER:-$USER}"
@@ -185,6 +185,7 @@ install_linux_prerequisites() {
 
   install_os_packages
 
+  # Verify Node/npm after install (in case distro repo shipped an old one)
   have node || fail 'Node.js installation failed or node is not on PATH.'
   have npm  || fail 'npm installation failed or npm is not on PATH.'
   log "  Node.js version: $(node --version)"
@@ -246,7 +247,7 @@ install_snarkjs() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ZK circuit artifacts (install deps + compile if missing)
+# ZK circuit artifacts (compile if missing)
 # ─────────────────────────────────────────────────────────────────────────────
 ensure_zk_artifacts() {
   [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping ZK compile.'; return 0; }
@@ -263,29 +264,10 @@ ensure_zk_artifacts() {
     return 0
   fi
 
+  log 'ZK circuit artifacts missing — compiling now.'
   have circom  || fail 'circom is required to compile the ZK circuit.'
   have snarkjs || fail 'snarkjs is required to compile the ZK circuit.'
-  have npm     || fail 'npm is required to install ZK circuit dependencies.'
 
-  # ── Install npm dependencies required by the .circom sources ────────────
-  # The circuit files `include` templates from circomlib (e.g. poseidon.circom),
-  # resolved via node_modules/circomlib relative to the circuit file. Without
-  # this step, circom fails with "file ... has not been found".
-  if [ -f "${zk_dir}/package.json" ]; then
-    log 'Installing ZK circuit npm dependencies (circomlib, etc.)...'
-    ( cd "${zk_dir}" && npm install --no-audit --no-fund )
-    if [ ! -d "${zk_dir}/node_modules/circomlib" ]; then
-      log '  circomlib not found after npm install — adding it explicitly.'
-      ( cd "${zk_dir}" && npm install --no-audit --no-fund circomlib )
-    fi
-    [ -d "${zk_dir}/node_modules/circomlib" ] \
-      || fail 'Failed to install circomlib into zk/node_modules.'
-  else
-    log 'No zk/package.json found — installing circomlib directly.'
-    ( cd "${zk_dir}" && npm install --no-audit --no-fund circomlib )
-  fi
-
-  log 'ZK circuit artifacts missing — compiling now.'
   ( cd "${zk_dir}" && bash compile.sh )
 
   [ -s "${wasm}" ] && [ -s "${zkey}" ] && [ -s "${vkey}" ] \

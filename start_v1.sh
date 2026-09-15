@@ -7,47 +7,6 @@ AUTO_INSTALL="${AUTO_INSTALL:-true}"
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
 
-install_compose_plugin_manually() {
-  local target_user="${SUDO_USER:-$USER}"
-  local target_home
-  target_home="$(getent passwd "${target_user}" | cut -d: -f6)"
-  [ -n "${target_home}" ] || target_home="${HOME}"
-  local plugin_dir="${target_home}/.docker/cli-plugins"
-  local plugin_path="${plugin_dir}/docker-compose"
-
-  if [ -x "${plugin_path}" ] && "${plugin_path}" version >/dev/null 2>&1; then
-    log 'Docker Compose v2 CLI plugin already installed manually; skipping download.'
-    return 0
-  fi
-
-  command -v curl >/dev/null 2>&1 || fail 'curl is required to install the Docker Compose plugin manually.'
-
-  local arch compose_arch
-  arch="$(uname -m)"
-  case "${arch}" in
-    x86_64) compose_arch=x86_64 ;;
-    aarch64|arm64) compose_arch=aarch64 ;;
-    *) fail "Unsupported architecture '${arch}' for manual Docker Compose install." ;;
-  esac
-
-  log "Downloading Docker Compose v2 CLI plugin to ${plugin_path}."
-  mkdir -p "${plugin_dir}"
-  local url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${compose_arch}"
-  local attempt
-  for attempt in 1 2 3; do
-    curl -fSL "${url}" -o "${plugin_path}" && break
-    [ "${attempt}" -eq 3 ] && fail "Could not download Docker Compose plugin from ${url}. Check internet, DNS, proxy, or firewall settings."
-  done
-  chmod +x "${plugin_path}"
-
-  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
-    chown -R "${SUDO_USER}:${SUDO_USER}" "${target_home}/.docker" 2>/dev/null || true
-  fi
-
-  "${plugin_path}" version >/dev/null 2>&1 || fail 'Docker Compose plugin installed but failed to run.'
-  log 'Docker Compose v2 CLI plugin installed manually.'
-}
-
 install_linux_prerequisites() {
   [ "${AUTO_INSTALL}" = true ] || return 0
 
@@ -71,43 +30,22 @@ install_linux_prerequisites() {
       fail 'sudo is required to install Debian/Ubuntu prerequisites.'
     fi
   elif command -v dnf >/dev/null 2>&1; then
-    log 'Red Hat/Fedora-family detected. Installing Docker, curl, and Git if needed.'
-    local as_root=()
+    log 'Red Hat/Fedora detected. Installing Docker, Compose, curl, and Git if needed.'
     if [ "$(id -u)" -eq 0 ]; then
-      as_root=()
+      dnf install -y docker docker-compose-plugin curl git ca-certificates
     elif command -v sudo >/dev/null 2>&1; then
-      as_root=(sudo)
+      sudo dnf install -y docker docker-compose-plugin curl git ca-certificates
     else
       fail 'sudo is required to install Red Hat-family prerequisites.'
     fi
-
-    # docker-compose-plugin is not published in Amazon Linux 2023's default
-    # repos (unlike RHEL/Fedora proper), so only request it there if present.
-    if dnf list docker-compose-plugin >/dev/null 2>&1; then
-      "${as_root[@]}" dnf install -y docker docker-compose-plugin curl git ca-certificates
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" dnf install -y docker curl git ca-certificates
-      install_compose_plugin_manually
-    fi
   elif command -v yum >/dev/null 2>&1; then
-    log 'YUM-based Linux detected. Installing Docker, curl, and Git if needed.'
-    local as_root=()
+    log 'YUM-based Linux detected. Installing Docker, Compose, curl, and Git if needed.'
     if [ "$(id -u)" -eq 0 ]; then
-      as_root=()
+      yum install -y docker docker-compose-plugin curl git ca-certificates
     elif command -v sudo >/dev/null 2>&1; then
-      as_root=(sudo)
+      sudo yum install -y docker docker-compose-plugin curl git ca-certificates
     else
       fail 'sudo is required to install YUM prerequisites.'
-    fi
-
-    # Amazon Linux 2's yum repos don't carry docker-compose-plugin either.
-    if yum list docker-compose-plugin >/dev/null 2>&1; then
-      "${as_root[@]}" yum install -y docker docker-compose-plugin curl git ca-certificates
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" yum install -y docker curl git ca-certificates
-      install_compose_plugin_manually
     fi
   else
     fail 'Unsupported Linux package manager. Install Docker Engine, Compose v2, curl, and Git manually.'

@@ -9,14 +9,6 @@ log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Refuse to run as root. Running the whole script with sudo breaks Docker
-# permissions, file ownership, and the docker-group check.
-# ─────────────────────────────────────────────────────────────────────────────
-if [ "$(id -u)" -eq 0 ]; then
-  fail 'Do NOT run this script with sudo or as root. Run it as your normal user; the script elevates only where needed.'
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 as_root() {
@@ -31,45 +23,6 @@ ensure_cargo_on_path() {
     . "${HOME}/.cargo/env"
   fi
   export PATH="${HOME}/.cargo/bin:${PATH}"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Docker group activation
-#
-# If the current user is in the docker group but the current shell doesn't
-# have it yet (new session not started), re-exec this script under `sg docker`
-# so all subsequent docker commands work without sudo.
-#
-# If the user is not in the docker group at all, add them and re-exec.
-# ─────────────────────────────────────────────────────────────────────────────
-ensure_docker_group_active() {
-  # If docker already works without sudo, nothing to do.
-  if docker info >/dev/null 2>&1; then
-    return 0
-  fi
-
-  # Not working. Is it because the user isn't in the docker group yet?
-  if ! id -nG "$USER" 2>/dev/null | grep -qw docker; then
-    log "Adding ${USER} to the docker group."
-    as_root groupadd -f docker
-    as_root usermod -aG docker "$USER"
-    log 'Group membership updated. Re-executing under the docker group.'
-  else
-    log "docker group not active in this shell yet — re-executing under 'sg docker'."
-  fi
-
-  # Re-exec under `sg docker`. SG_DOCKER_REEXEC guards against infinite loops.
-  if [ -z "${SG_DOCKER_REEXEC:-}" ]; then
-    export SG_DOCKER_REEXEC=1
-    # `sg docker` runs the given command with the docker group as the primary group.
-    # It does NOT require a password if the user is a member of the group.
-    exec sg docker -c "$0 $*"
-  fi
-
-  # If we reach here, sg docker re-exec failed to give us access.
-  if ! docker info >/dev/null 2>&1; then
-    fail 'Docker is installed but not reachable. Try: exit, SSH back in, then re-run.'
-  fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,15 +139,18 @@ install_docker_debian() {
   as_root apt-get update
   as_root apt-get install -y ca-certificates curl gnupg git build-essential nodejs npm
 
+  # Remove any conflicting pre-installed packages
   as_root apt-get remove -y docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc 2>/dev/null || true
 
+  # Add Docker's official GPG key
   as_root install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
     as_root gpg --dearmor -o /etc/apt/keyrings/docker.gpg
   as_root chmod a+r /etc/apt/keyrings/docker.gpg
 
-  local codename
+  # Add Docker's official APT repository
   # shellcheck disable=SC1091
+  local codename
   codename="$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${VERSION_CODENAME:-stable}}")"
   echo \
     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
@@ -208,6 +164,9 @@ install_docker_debian() {
   log '  Docker Engine + Compose v2 + Buildx installed from official repo.'
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OS package installation
+# ─────────────────────────────────────────────────────────────────────────────
 install_os_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     install_docker_debian
@@ -239,6 +198,7 @@ install_os_packages() {
 install_linux_prerequisites() {
   [ "${AUTO_INSTALL}" = true ] || return 0
 
+  # Fast path: everything already present
   if have docker && docker compose version >/dev/null 2>&1 && buildx_meets_min_version \
      && have curl && have git && have npm && have node && have gcc && have make; then
     log 'Docker, Compose, Buildx, curl, Git, Node.js, npm, and build tools are already installed; skipping package installation.'
@@ -254,7 +214,7 @@ install_linux_prerequisites() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Rust toolchain
+# Rust toolchain (needed to build circom)
 # ─────────────────────────────────────────────────────────────────────────────
 install_rust_toolchain() {
   [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping Rust install.'; return 0; }
@@ -272,7 +232,7 @@ install_rust_toolchain() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Circom (built from source)
+# Circom (built from source, installed to ~/.cargo/bin)
 # ─────────────────────────────────────────────────────────────────────────────
 install_circom() {
   [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping circom build.'; return 0; }
@@ -292,12 +252,12 @@ install_circom() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SnarkJS
+# SnarkJS (global npm package)
 # ─────────────────────────────────────────────────────────────────────────────
 install_snarkjs() {
   [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping snarkjs install.'; return 0; }
   if have snarkjs; then
-    log "snarkjs already installed."
+    log "snarkjs already installed ($(snarkjs --version 2>/dev/null | head -n1 || echo 'unknown'))."
     return 0
   fi
   log 'Installing snarkjs globally via npm...'
@@ -308,7 +268,7 @@ install_snarkjs() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ZK circuit artifacts
+# ZK circuit artifacts (install deps + compile if missing)
 # ─────────────────────────────────────────────────────────────────────────────
 ensure_zk_artifacts() {
   [ "${INSTALL_TOOLCHAIN}" = true ] || { log 'INSTALL_TOOLCHAIN=false — skipping ZK compile.'; return 0; }
@@ -329,6 +289,9 @@ ensure_zk_artifacts() {
   have snarkjs || fail 'snarkjs is required to compile the ZK circuit.'
   have npm     || fail 'npm is required to install ZK circuit dependencies.'
 
+  # Install npm dependencies required by the .circom sources.
+  # Circuit files `include` templates from circomlib (e.g. poseidon.circom),
+  # resolved via node_modules/circomlib relative to the circuit file.
   if [ -f "${zk_dir}/package.json" ]; then
     log 'Installing ZK circuit npm dependencies (circomlib, etc.)...'
     ( cd "${zk_dir}" && npm install --no-audit --no-fund )
@@ -359,18 +322,6 @@ if [ "$(uname -s)" != Linux ]; then
 fi
 
 install_linux_prerequisites
-
-# Ensure Docker daemon is running and the current user can talk to it.
-if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
-  if ! systemctl is-active --quiet docker; then
-    log 'Starting Docker service.'
-    as_root systemctl enable --now docker
-    sleep 2
-  fi
-fi
-
-ensure_docker_group_active
-
 install_rust_toolchain
 install_circom
 install_snarkjs
@@ -382,6 +333,20 @@ if ! buildx_meets_min_version; then
   log 'No sufficiently new Docker Buildx found; installing a current version manually.'
   install_buildx_plugin_manually
   buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
+    log 'Starting Docker service.'
+    as_root systemctl enable --now docker
+  fi
+fi
+docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
+
+# Add current user to docker group so future logins don't need sudo
+if ! id -nG "$USER" 2>/dev/null | grep -qw docker; then
+  log "Adding ${USER} to the docker group (log out and back in for it to apply to new shells)."
+  as_root usermod -aG docker "$USER" 2>/dev/null || true
 fi
 
 cd "${ROOT_DIR}"

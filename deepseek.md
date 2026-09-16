@@ -1,3 +1,8 @@
+Here's a PowerShell startup script for Windows 10/11 that mirrors the Linux `start_debian.sh` — it installs Docker Desktop prerequisites, Node.js/npm, Rust, circom, snarkjs, compiles the ZK artifacts, and boots the stack.
+
+Save this as **`start.ps1`** in the root of the repo (next to `start.sh`).
+
+```powershell
 # start.ps1
 # Windows 10/11 launcher for the Privacy-Preserving SIM Registration System.
 # Mirrors network/scripts/start.sh behavior.
@@ -417,3 +422,88 @@ Write-Host 'Everything started.'
 Write-Host 'Frontend: http://localhost:3000'
 Write-Host 'Backend:  http://localhost:3001'
 Write-Host 'Health:   http://localhost:3001/health'
+```
+
+### 🖥️ How to Run
+
+Open **PowerShell as Administrator** (needed for Docker Desktop install and PATH updates), then:
+
+```powershell
+cd C:\path\to\sim-registration-system
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\start.ps1
+```
+
+The `Set-ExecutionPolicy -Scope Process` line lets you run the script in this session only without changing your system policy.
+
+### 📋 What the Script Does
+
+| Step | Details |
+|---|---|
+| **Base prerequisites** | Installs Docker Desktop, Git for Windows, Node.js LTS via `winget` if missing |
+| **Docker engine** | Starts Docker Desktop automatically and waits up to 120s for it to be ready |
+| **Compose + Buildx** | Verifies `docker compose` and Buildx ≥ 0.17.0 |
+| **Rust** | Downloads `rustup-init.exe` and installs `cargo` + `rustc` (MSVC toolchain) |
+| **Circom** | Clones and `cargo build --release` + `cargo install --path circom` |
+| **SnarkJS** | `npm install -g snarkjs` |
+| **ZK artifacts** | Runs `npm install` in `zk/` and invokes `bash compile.sh` via Git Bash |
+| **Fabric bootstrap** | Runs `network.sh up` via Git Bash if crypto material is missing |
+| **App containers** | `docker compose up --build -d` |
+| **Chaincode deploy** | Runs `network.sh deploy` via Git Bash |
+
+### ⚙️ Environment Flags
+
+```powershell
+# Skip OS package installs (if Docker/Git/Node are already set up)
+$env:AUTO_INSTALL="false"; .\start.ps1
+
+# Skip the entire toolchain (Rust, circom, snarkjs, ZK compile)
+$env:INSTALL_TOOLCHAIN="false"; .\start.ps1
+```
+
+### ⚠️ Requirements & Caveats
+
+| Requirement | Why |
+|---|---|
+| **Windows 10 21H2 or Windows 11** | Docker Desktop WSL2 backend |
+| **WSL2 enabled** | Docker Desktop uses it by default |
+| **Administrator PowerShell** | Needed for `winget install` and PATH refresh |
+| **Git for Windows** | Provides `bash.exe` used by `network.sh` and `zk/compile.sh` |
+| **~8 GB free disk space** | Fabric images + Rust build cache + circom compile |
+
+### 🔧 Known Quirks
+
+1. **Docker Desktop's first start** — Even after install, the user must accept the license on first launch. The script waits for the engine and fails clearly if it doesn't come up.
+
+2. **`bash` for shell scripts** — Both `network.sh` and `zk/compile.sh` are bash scripts. Windows uses Git Bash to run them. If you don't have Git for Windows installed, the script aborts with a clear message.
+
+3. **PATH updates after winget installs** — Winget doesn't update the current session's PATH, so `Refresh-Path` re-reads the Machine + User PATH from the registry. If a tool still isn't found after install, restart PowerShell.
+
+4. **Line endings** — Git on Windows may check out `.sh` files with CRLF line endings, which breaks them in bash. Before running, do:
+   ```powershell
+   git config --global core.autocrlf input
+   git rm --cached -r . ; git reset --hard
+   ```
+   Or manually convert:
+   ```bash
+   dos2unix network/scripts/*.sh zk/compile.sh
+   ```
+   (Git Bash has `dos2unix` available.)
+
+5. **First-run time** — Expect **20–40 minutes** on a fresh Windows machine: Docker Desktop install (~5 min), rustup + Rust toolchain (~5 min), circom build (~4 min), ZK compile (~2 min), Fabric image pulls (~5 min), plus the network bootstrap.
+
+### 📁 File Placement
+
+Put `start.ps1` in the **root** of the repo, next to `start.sh`. Then a user on Windows runs:
+
+```powershell
+.\start.ps1
+```
+
+and a user on Linux/macOS runs:
+
+```bash
+./start.sh
+```
+
+Same repo, same one-command launch on both platforms.

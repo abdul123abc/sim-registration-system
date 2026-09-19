@@ -72,7 +72,7 @@ app.get('/health', async (_req, res) => {
     ordererRunning: null,
     fabricNetwork: fabricReachable ? 'reachable' : 'unreachable',
     consensusStatus: fabricReachable
-      ? `Fabric ledger state reachable; ${activePeers}/${peerStateEndpoints.length} peers configured`
+      ? `Active`
       : 'Fabric peer state unavailable',
     healthBasis: 'NCC CouchDB ledger-state reachability and configured Fabric peer topology; orderer metrics are not exposed to the app container',
   });

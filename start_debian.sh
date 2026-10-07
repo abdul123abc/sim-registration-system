@@ -25,6 +25,8 @@ as_root() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+. "${ROOT_DIR}/docker-startup.sh"
+
 ensure_cargo_on_path() {
   if [ -f "${HOME}/.cargo/env" ]; then
     # shellcheck disable=SC1091
@@ -360,16 +362,7 @@ fi
 
 install_linux_prerequisites
 
-# Ensure Docker daemon is running and the current user can talk to it.
-if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
-  if ! systemctl is-active --quiet docker; then
-    log 'Starting Docker service.'
-    as_root systemctl enable --now docker
-    sleep 2
-  fi
-fi
-
-ensure_docker_group_active
+docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
 
 install_rust_toolchain
 install_circom

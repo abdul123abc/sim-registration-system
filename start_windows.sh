@@ -9,6 +9,10 @@ log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+if [ "$(uname -s)" = Linux ]; then
+  . "${ROOT_DIR}/docker-startup.sh"
+fi
+
 # Detect MSYS/MINGW (Git Bash)
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
@@ -66,7 +70,11 @@ fi
 # ── Docker prerequisites ────────────────────────────────────────────────────
 have docker || fail 'docker CLI not found.'
 docker compose version >/dev/null 2>&1 || fail 'docker compose v2 not available.'
-docker info >/dev/null 2>&1 || fail 'Docker engine not reachable.'
+if [ "$(uname -s)" = Linux ]; then
+  docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
+else
+  docker info >/dev/null 2>&1 || fail 'Docker engine not reachable.'
+fi
 
 # ── Boot the stack ──────────────────────────────────────────────────────────
 cd "$ROOT_DIR"

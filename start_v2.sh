@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${ROOT_DIR}/docker-startup.sh"
 AUTO_INSTALL="${AUTO_INSTALL:-true}"
 
 log() { printf '[startup] %s\n' "$*"; }
@@ -205,13 +206,7 @@ if ! buildx_meets_min_version; then
   buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  if command -v systemctl >/dev/null 2>&1 && [ "${AUTO_INSTALL}" = true ]; then
-    log 'Starting Docker service.'
-    if [ "$(id -u)" -eq 0 ]; then systemctl enable --now docker; else sudo systemctl enable --now docker; fi
-  fi
-fi
-docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
+docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
 
 cd "${ROOT_DIR}"
 log 'Creating shared Docker network.'

@@ -17,6 +17,8 @@ as_root() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+. "${ROOT_DIR}/docker-startup.sh"
+
 # Source cargo env for the current shell (cargo installs to ~/.cargo/bin)
 ensure_cargo_on_path() {
   if [ -f "${HOME}/.cargo/env" ]; then
@@ -296,13 +298,7 @@ if ! buildx_meets_min_version; then
   buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
-    log 'Starting Docker service.'
-    as_root systemctl enable --now docker
-  fi
-fi
-docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
+docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
 
 cd "${ROOT_DIR}"
 log 'Creating shared Docker network.'

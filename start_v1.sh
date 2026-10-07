@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${ROOT_DIR}/docker-startup.sh"
 AUTO_INSTALL="${AUTO_INSTALL:-true}"
 
 log() { printf '[startup] %s\n' "$*"; }
@@ -60,13 +61,7 @@ install_linux_prerequisites
 command -v docker >/dev/null 2>&1 || fail 'Docker is not installed.'
 docker compose version >/dev/null 2>&1 || fail 'Docker Compose v2 is not available.'
 
-if ! docker info >/dev/null 2>&1; then
-  if command -v systemctl >/dev/null 2>&1 && [ "${AUTO_INSTALL}" = true ]; then
-    log 'Starting Docker service.'
-    if [ "$(id -u)" -eq 0 ]; then systemctl enable --now docker; else sudo systemctl enable --now docker; fi
-  fi
-fi
-docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
+docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
 
 cd "${ROOT_DIR}"
 log 'Creating shared Docker network.'

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "${ROOT_DIR}/docker-startup.sh"
 AUTO_INSTALL="${AUTO_INSTALL:-true}"
 INSTALL_TOOLCHAIN="${INSTALL_TOOLCHAIN:-true}"   # set false to skip rust/circom/snarkjs/zk build
 
@@ -335,19 +336,7 @@ if ! buildx_meets_min_version; then
   buildx_meets_min_version || fail 'Docker Buildx still does not meet the 0.17.0+ version Compose requires after manual install.'
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  if have systemctl && [ "${AUTO_INSTALL}" = true ]; then
-    log 'Starting Docker service.'
-    as_root systemctl enable --now docker
-  fi
-fi
-docker info >/dev/null 2>&1 || fail 'Docker is installed but not running or your user lacks Docker permission.'
-
-# Add current user to docker group so future logins don't need sudo
-if ! id -nG "$USER" 2>/dev/null | grep -qw docker; then
-  log "Adding ${USER} to the docker group (log out and back in for it to apply to new shells)."
-  as_root usermod -aG docker "$USER" 2>/dev/null || true
-fi
+docker_startup "$@" || fail 'Could not start Docker or activate Docker permissions.'
 
 cd "${ROOT_DIR}"
 log 'Creating shared Docker network.'

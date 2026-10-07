@@ -183,7 +183,7 @@ The script prints `PASS`, `WARN`, and `FAIL` records and exits with:
 - `0`: no failed checks; the master QA gate passed.
 - `1`: one or more checks failed; inspect the failed check and service logs.
 
-A degraded health report is recorded as a warning so the suite can still complete the more decisive end-to-end registration test. A successful registration, ledger query, audit lookup, and CID pin check demonstrate that the transaction path is working. A healthy response normally includes `activePeers: 5`, `totalPeers: 5`, a non-zero `totalSubscribers` value when registrations exist, and `fabricNetwork: "reachable"`.
+A degraded health report is recorded as a warning so the suite can still complete the more decisive end-to-end registration test. A successful registration, ledger query, audit lookup, and CID pin check demonstrate that the transaction path is working. A healthy response normally includes `activePeers: 5`, `totalPeers: 5`, a non-zero `totalSubscribers` value when registrations exist, `fabricNetwork: "reachable"`, and `consensusStatus: "Active"`. The current implementation uses the NCC CouchDB ledger-state query as the reachability signal; it does not expose direct Raft orderer metrics to the backend container.
 
 ### Recommended QA sequence
 
@@ -266,13 +266,31 @@ These chaincodes run as CCaaS, meaning “Chaincode as a Service.” Fabric stor
 
 That is why an error such as `lookup update-tracking ... no such host` means a chaincode container or Docker-network problem, not necessarily invalid form data.
 
-## Latest verified QA result
+## Current verification status
+
+The repository is clean and the latest committed change updates the health response's `consensusStatus` value to `Active` when the NCC CouchDB ledger-state query succeeds.
+
+Static validation completed successfully for both Compose files and all Bash startup, network, test, and ZK scripts:
 
 ```text
-Passed: 35
-Warnings: 0
-Failed: 0
-MASTER QA RESULT: PASSED
+Docker Compose configuration: valid
+Bash syntax: valid
+```
+
+A live deployment check was performed on 2026-10-07. No Docker containers were running, and `http://localhost:3001/health` refused the connection, so the following values are not currently claimed as a passing runtime result:
+
+```text
+MASTER QA RESULT: NOT RUNNING
+Frontend: unavailable
+Backend: unavailable
+Fabric network: unavailable
+```
+
+Run the startup and QA commands after ensuring Docker is running:
+
+```bash
+bash start.sh
+bash tests/master_qa.sh
 ```
 
 ## Repository hygiene

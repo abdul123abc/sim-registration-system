@@ -16,7 +16,109 @@ The startup launcher can install missing host prerequisites when run with its de
 
 Supported Linux families are Debian/Ubuntu (`apt-get`), Red Hat/Fedora/Rocky/Alma (`dnf`), and older Red Hat-family systems (`yum`). The launcher installs or checks Docker Engine, Docker Compose v2, Git, curl, and CA certificates. Fabric command-line binaries are bundled under `network/scripts/bin`.
 
-On Windows, use PowerShell. The Windows launcher uses `winget` to install Docker Desktop when needed, checks WSL, starts Docker Desktop, and runs the tested Bash workflow inside WSL. A restart may be required after the first WSL installation.
+### Windows setup options
+
+There are two supported Windows workflows:
+
+1. **Native PowerShell:** Run the repository's PowerShell launcher from Windows. It uses Docker Desktop, Git for Windows, Node.js, npm, Rust, and Git Bash.
+2. **WSL2 Ubuntu:** Run the Linux launcher inside Ubuntu on WSL2. Docker Desktop must be connected to the WSL distribution.
+
+#### Option A: Native Windows PowerShell
+
+Open PowerShell as a normal user, not an administrator. If the required tools are missing, install them with `winget`:
+
+```powershell
+winget install --id Docker.DockerDesktop -e --accept-package-agreements --accept-source-agreements
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+winget install --id OpenJS.NodeJS.LTS -e --accept-package-agreements --accept-source-agreements
+```
+
+Restart PowerShell after installation. Start Docker Desktop, wait until **Engine running**, and verify that the Docker CLI can reach it:
+
+```powershell
+docker info
+docker compose version
+git --version
+node --version
+npm --version
+```
+
+If `docker info` fails, reopen Docker Desktop and confirm that its engine is running. Do not run the launcher until the Docker Desktop engine is ready.
+
+The repository's Windows launcher can install additional required packages automatically. From the project directory, run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\start.ps1
+```
+
+The launcher uses Git Bash for the shell scripts. If Bash is not found, install Git for Windows and reopen the terminal so the updated PATH is available.
+
+#### Option B: WSL2 Ubuntu
+
+First, enable WSL2 from Windows PowerShell:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Restart Windows if the installation asks you to do so. Check the distribution and confirm WSL2:
+
+```powershell
+wsl -l -v
+wsl --set-version Ubuntu 2
+```
+
+Open Ubuntu from the Start menu, then install the basic host tools:
+
+```bash
+sudo apt update
+sudo apt install -y git curl ca-certificates nodejs npm
+```
+
+Start Docker Desktop from the Windows Start menu and wait for **Engine running**. In Ubuntu, verify that Docker Desktop is the active Docker context:
+
+```bash
+docker info
+docker context inspect
+docker compose version
+```
+
+If the Docker CLI reports a WSL or context error, run:
+
+```bash
+docker context use desktop-linux
+```
+
+Restart the Ubuntu terminal after changing the Docker context. Then enter the project directory. If the project is not already present, clone it into WSL:
+
+```bash
+git clone <your-repo-url>
+cd HyperLedger/project
+```
+
+If you already have the project on Windows, mount the containing directory into WSL and change into the project path. For example:
+
+```bash
+cd /mnt/d/path/to/HyperLedger/project
+```
+
+Use the repository's Linux launcher from the project root. The launcher can install missing Linux dependencies, but Docker Desktop must already be running and connected to the WSL distribution:
+
+```bash
+chmod +x start.sh
+AUTO_INSTALL=false ./start.sh
+```
+
+The `AUTO_INSTALL=false` option skips package-manager installation. Install the required Linux packages manually before using it. To let the launcher perform its full setup, run:
+
+```bash
+./start.sh
+```
+
+The launcher creates `sim_net`, starts the Fabric network, builds the application images, starts the frontend and backend, and restores the four CCaaS containers.
+
+> If Docker Desktop is running on Windows but `docker info` fails inside Ubuntu, open Docker Desktop's **Settings > Resources > WSL Integration**, enable the Ubuntu distribution, and restart the WSL terminal.
 
 If automatic setup is unavailable, install the following manually:
 
@@ -54,27 +156,38 @@ cd /path/to/HyperLedger/project
 
 ## 3. Start everything
 
-The startup script creates the shared `sim_net` network, starts Fabric, starts the app, and restores or deploys the committed CCaaS chaincode services.
+The project provides separate launchers for the supported operating systems. On Linux or Debian/Ubuntu, run the Linux launcher from the project root:
 
 ```bash
 chmod +x start.sh
 ./start.sh
 ```
 
-On Windows PowerShell:
+On Windows PowerShell, use the native Windows launcher:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\start.ps1
 ```
 
-The launcher detects the operating system before starting. Do not run `start.sh` directly in ordinary Windows Command Prompt.
+The native launcher requires Docker Desktop, Git for Windows, Node.js, and npm. It installs missing tools with `winget`, starts Docker Desktop when needed, and uses Git Bash for the repository's shell scripts. It does not require a WSL distribution. If you prefer WSL2, follow the WSL2 Ubuntu instructions above and run `./start.sh` from Ubuntu instead.
 
 To disable automatic Linux package installation:
 
 ```bash
 AUTO_INSTALL=false ./start.sh
 ```
+
+Other Linux launcher variants are available for compatibility checks:
+
+```bash
+./start_debian.sh
+./start_v1.sh
+./start_v2.sh
+./start_v3.sh
+```
+
+Use the launcher intended for the current environment and review its behavior before running it in a production host.
 
 ---
 
@@ -290,9 +403,19 @@ You are now ready to run the project on another machine.
 
 ## Current verification
 
+The latest repository state contains clean Git status, valid Docker Compose configuration, and valid Bash syntax for the startup, network, QA, and ZK scripts. A fresh live check on 2026-10-07 found no running Docker containers and no service on port 3001, so the runtime QA result is not currently available.
+
+Run these commands only after starting the stack:
+
+```bash
+bash start.sh
+bash tests/master_qa.sh
+```
+
+A successful run is expected to print the following marker after the live QA command completes:
+
 ```text
-Passed: 35
-Warnings: 0
-Failed: 0
 MASTER QA RESULT: PASSED
 ```
+
+Do not copy the earlier 35/35 result into the current status unless the QA command has been run again against a live deployment.

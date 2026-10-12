@@ -44,25 +44,36 @@ ORDERER_INNER="${CRYPTO_INNER}/ordererOrganizations/example.com/orderers/orderer
 PKG_HOST_PATH="${NETWORK_DIR}/channel-artifacts/${CC_NAME}_v2.tar.gz"
 
 # ── Wait for CCaaS gRPC port to be accepting connections ───────────────────────
-# Polls inside sim_net via a temporary Alpine container (nc -z).
+# Polls from sim_cli without starting a temporary probe container.
 # go run -mod=vendor . recompiles from source on every start — typically
 # 30-90 s on this host. A flat sleep is not reliable.
 wait_for_ccaas_port() {
   local HOST=$1
   local PORT=$2
-  local MAX_ATTEMPTS=60   # 60 × 2 s = up to 2 minutes
+  local TIMEOUT_SECONDS=120
+  local DEADLINE=$((SECONDS + TIMEOUT_SECONDS))
+  local ATTEMPT=0
   log "   Polling ${HOST}:${PORT} for gRPC readiness..."
-  for i in $(seq 1 ${MAX_ATTEMPTS}); do
-    if docker run --rm --network sim_net alpine \
-         sh -c "nc -z ${HOST} ${PORT}" 2>/dev/null; then
-      log "   ✓ ${HOST}:${PORT} ready after $((i * 2))s"
+  while (( SECONDS < DEADLINE )); do
+    ATTEMPT=$((ATTEMPT + 1))
+    if docker exec sim_cli timeout 3 bash -c \
+         'echo > "/dev/tcp/$1/$2"' _ "${HOST}" "${PORT}" >/dev/null 2>&1; then
+      log "   ✓ ${HOST}:${PORT} ready (attempt ${ATTEMPT})"
       return 0
+    fi
+
+    local CONTAINER_STATE
+    CONTAINER_STATE=$(docker inspect --format '{{.State.Status}}' "${HOST}" 2>/dev/null || printf 'unknown')
+    if [ "${CONTAINER_STATE}" != running ]; then
+      log "   ERROR: ${HOST} container stopped during startup (state: ${CONTAINER_STATE}) — recent logs:"
+      docker logs "${HOST}" --tail 50 2>&1 || true
+      return 1
     fi
     sleep 2
   done
-  log "   ERROR: ${HOST}:${PORT} not ready after $((MAX_ATTEMPTS * 2))s — recent container logs:"
-  docker logs "${HOST}" --tail 30 2>&1 || true
-  exit 1
+  log "   ERROR: ${HOST}:${PORT} not ready after ${TIMEOUT_SECONDS}s — recent container logs:"
+  docker logs "${HOST}" --tail 50 2>&1 || true
+  return 1
 }
 
 # ── Helper: set CLI env for a given org ──────────────────────────────────────
@@ -165,6 +176,10 @@ log "   ✓ Package ID: ${PKG_ID}"
 log ""
 log "── Step 5: Restart CCaaS container → ${CC_NAME} ────────────────"
 
+if [ ! -f "${CHAINCODE_DIR}/${CC_NAME}/go.mod" ]; then
+  error "Chaincode module file not found: ${CHAINCODE_DIR}/${CC_NAME}/go.mod"
+fi
+
 docker rm -f "${CC_NAME}" 2>/dev/null || true
 
 docker run -d \
@@ -173,7 +188,7 @@ docker run -d \
   -e CHAINCODE_SERVER_ADDRESS="0.0.0.0:${CC_PORT}" \
   -e CHAINCODE_ID="${PKG_ID}" \
   -e CORE_CHAINCODE_ID_NAME="${PKG_ID}" \
-  -v "${CHAINCODE_DIR}/${CC_NAME}:/opt/gopath/src/github.com/chaincode/${CC_NAME}" \
+  -v "${CHAINCODE_DIR}/${CC_NAME}:/opt/gopath/src/github.com/chaincode/${CC_NAME}:ro,z" \
   -w "/opt/gopath/src/github.com/chaincode/${CC_NAME}" \
   hyperledger/fabric-ccenv:2.5 \
   go run -mod=vendor .

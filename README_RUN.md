@@ -356,9 +356,26 @@ docker ps --filter name=subscriber-registration \
 	--filter name=access-control
 ```
 
-Restore them with:
+If startup reports that a chaincode service did not become ready, inspect its logs:
 
 ```bash
+docker logs subscriber-registration --tail=100
+```
+
+On Fedora and other SELinux-enabled hosts, the deploy script labels the chaincode
+source mount for container access. If an earlier attempt exited before startup,
+or lifecycle approval reports that the channel is missing, rerun startup or
+deployment. The channel check is safe to repeat: it joins the orderer and only
+joins peers that are missing channel membership, without deleting ledger data.
+On Fedora, Fabric's crypto and channel-artifact bind mounts use shared SELinux
+labels so containers can read the generated certificates and channel block.
+Startup recreates the CLI container to apply the updated mount. It will not
+regenerate a missing channel block because a newly generated genesis block
+could fail to match an existing ledger.
+
+```bash
+./start.sh
+# Or resume only Fabric and chaincode deployment:
 bash network/scripts/network.sh deploy
 ```
 

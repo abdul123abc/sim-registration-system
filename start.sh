@@ -337,6 +337,8 @@ if [ ! -d "${ROOT_DIR}/network/crypto-config" ] || [ ! -d "${ROOT_DIR}/network/c
 else
   (cd "${ROOT_DIR}/network/docker" && docker compose up -d)
 fi
+log 'Ensuring the Fabric channel and peer membership are ready.'
+bash "${ROOT_DIR}/network/scripts/network.sh" ensure-channel
 log 'Building and starting application containers.'
 docker compose rm -sfv backend frontend >/dev/null 2>&1 || true
 docker compose up --build -d

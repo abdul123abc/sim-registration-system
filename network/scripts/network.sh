@@ -64,6 +64,85 @@ network_up() {
   log "╚══════════════════════════════════════════════════════════════╝"
 }
 
+network_ensure_channel() {
+  check_prereqs
+
+  if [ ! -d "${NETWORK_DIR}/crypto-config/peerOrganizations" ] || \
+     [ ! -d "${NETWORK_DIR}/crypto-config/ordererOrganizations" ]; then
+    error "Existing Fabric crypto material is incomplete. Refusing to regenerate identities automatically because that could invalidate existing ledger data."
+  fi
+
+  local ARTIFACTS_DIR="${NETWORK_DIR}/channel-artifacts"
+  if [ ! -s "${ARTIFACTS_DIR}/${CHANNEL_NAME}.block" ]; then
+    error "Channel block is missing on the host: ${ARTIFACTS_DIR}/${CHANNEL_NAME}.block. Refusing to generate a new genesis block that might not match the existing ledger."
+  fi
+
+  local ORG
+  local MSP_ID
+  local -A ANCHOR_MSP=(
+    [NCC]="NCCMSP"
+    [MTN]="MTNMSP"
+    [Airtel]="AIRTELMSP"
+    [Glo]="GLOMSP"
+    [NineMobile]="NINEMOBILEMSP"
+  )
+  for ORG in NCC MTN Airtel Glo NineMobile; do
+    MSP_ID="${ANCHOR_MSP[$ORG]}"
+    if [ ! -s "${ARTIFACTS_DIR}/${MSP_ID}anchors.tx" ]; then
+      log "Anchor update for ${MSP_ID} is missing; generating it."
+      configtxgen \
+        -profile SimRegistrationChannel \
+        -outputAnchorPeersUpdate "${ARTIFACTS_DIR}/${MSP_ID}anchors.tx" \
+        -channelID "${CHANNEL_NAME}" \
+        -asOrg "${MSP_ID}"
+    fi
+  done
+
+  if [ ! -s "${ARTIFACTS_DIR}/${CHANNEL_NAME}.block" ]; then
+    error "Failed to generate channel block ${ARTIFACTS_DIR}/${CHANNEL_NAME}.block"
+  fi
+
+  if ! docker network inspect sim_net >/dev/null 2>&1; then
+    docker network create sim_net >/dev/null
+  fi
+
+  log "=== Starting Fabric services and repairing channel membership if needed ==="
+  ${DOCKER_COMPOSE} \
+    --env-file "${NETWORK_DIR}/docker/.env" \
+    -f "${COMPOSE_FILE}" \
+    up -d
+  ${DOCKER_COMPOSE} \
+    --env-file "${NETWORK_DIR}/docker/.env" \
+    -f "${COMPOSE_FILE}" \
+    up -d --force-recreate cli
+
+  local DEADLINE=$((SECONDS + 120))
+  local ORDERER_STATE
+  local ORDERER_READY=false
+  while (( SECONDS < DEADLINE )); do
+    ORDERER_STATE=$(docker inspect --format '{{.State.Status}}' orderer.example.com 2>/dev/null || printf 'unknown')
+    if [ "${ORDERER_STATE}" = exited ] || [ "${ORDERER_STATE}" = dead ]; then
+      log "ERROR: Orderer stopped before channel recovery (state: ${ORDERER_STATE}); recent logs:"
+      docker logs orderer.example.com --tail 80 2>&1 || true
+      return 1
+    fi
+    if [ "${ORDERER_STATE}" = running ] && docker exec sim_cli timeout 3 bash -c \
+      'echo > "/dev/tcp/orderer.example.com/7053"' >/dev/null 2>&1; then
+      ORDERER_READY=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "${ORDERER_READY}" != true ]; then
+    log "ERROR: Orderer admin endpoint orderer.example.com:7053 did not become ready."
+    docker logs orderer.example.com --tail 80 2>&1 || true
+    return 1
+  fi
+
+  bash "${SCRIPT_DIR}/createChannel.sh"
+}
+
 network_down() {
   log "=== Stopping Docker containers ==="
   ${DOCKER_COMPOSE} \
@@ -88,6 +167,7 @@ network_status() {
 }
 
 network_deploy() {
+  network_ensure_channel
   log "=== Deploying chaincodes (Fabric Lifecycle v2) ==="
   bash "${SCRIPT_DIR}/deployChaincode.sh" "$@"
 }
@@ -103,13 +183,14 @@ MODE="${1:-help}"
 shift || true
 case "${MODE}" in
   up)      network_up ;;
+  ensure-channel) network_ensure_channel ;;
   down)    network_down ;;
   restart) network_down; network_up ;;
   status)  network_status ;;
   deploy)  network_deploy "$@" ;;
   test)    network_test ;;
   *)
-    echo "Usage: $0 {up|down|restart|status|deploy|test}"
+    echo "Usage: $0 {up|ensure-channel|down|restart|status|deploy|test}"
     exit 1
     ;;
 esac

@@ -38,9 +38,9 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./backend:/app
-      - ./network:/app/network
-      - ./zk:/zk
+      - ./backend:/app:z
+      - ./network:/app/network:z
+      - ./zk:/zk:z
       - /app/node_modules
     networks:
       - sim_net
@@ -59,7 +59,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+      - ./frontend:/app:z
       - /app/node_modules
     networks:
       - sim_net

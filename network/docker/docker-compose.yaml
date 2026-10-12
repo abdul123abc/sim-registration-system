@@ -26,6 +26,8 @@ services:
   orderer.example.com:
     image: hyperledger/fabric-orderer:${FABRIC_VERSION}
     container_name: orderer.example.com
+    security_opt:
+      - label:disable
     environment:
       - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
@@ -51,8 +53,8 @@ services:
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric
     command: orderer
     volumes:
-      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp:/var/hyperledger/orderer/msp
-      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls:/var/hyperledger/orderer/tls
+      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp:/var/hyperledger/orderer/msp:ro,z
+      - ../crypto-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls:/var/hyperledger/orderer/tls:ro,z
       - orderer.example.com:/var/hyperledger/production/orderer
     ports:
       - "7050:7050"
@@ -110,8 +112,8 @@ services:
     command: peer node start
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/msp:/etc/hyperledger/fabric/msp
-      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls:/etc/hyperledger/fabric/tls
+      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/msp:/etc/hyperledger/fabric/msp:ro,z
+      - ../crypto-config/peerOrganizations/ncc.example.com/peers/peer0.ncc.example.com/tls:/etc/hyperledger/fabric/tls:ro,z
       - peer0.ncc.example.com:/var/hyperledger/production
     ports:
       - "7051:7051"
@@ -169,8 +171,8 @@ services:
     command: peer node start
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/msp:/etc/hyperledger/fabric/msp
-      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/tls:/etc/hyperledger/fabric/tls
+      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/msp:/etc/hyperledger/fabric/msp:ro,z
+      - ../crypto-config/peerOrganizations/mno1.example.com/peers/peer0.mno1.example.com/tls:/etc/hyperledger/fabric/tls:ro,z
       - peer0.mno1.example.com:/var/hyperledger/production
     ports:
       - "8051:8051"
@@ -228,8 +230,8 @@ services:
     command: peer node start
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/msp:/etc/hyperledger/fabric/msp
-      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/tls:/etc/hyperledger/fabric/tls
+      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/msp:/etc/hyperledger/fabric/msp:ro,z
+      - ../crypto-config/peerOrganizations/mno2.example.com/peers/peer0.mno2.example.com/tls:/etc/hyperledger/fabric/tls:ro,z
       - peer0.mno2.example.com:/var/hyperledger/production
     ports:
       - "9051:9051"
@@ -287,8 +289,8 @@ services:
     command: peer node start
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/msp:/etc/hyperledger/fabric/msp
-      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/tls:/etc/hyperledger/fabric/tls
+      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/msp:/etc/hyperledger/fabric/msp:ro,z
+      - ../crypto-config/peerOrganizations/mno3.example.com/peers/peer0.mno3.example.com/tls:/etc/hyperledger/fabric/tls:ro,z
       - peer0.mno3.example.com:/var/hyperledger/production
     ports:
       - "10051:10051"
@@ -346,8 +348,8 @@ services:
     command: peer node start
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/msp:/etc/hyperledger/fabric/msp
-      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/tls:/etc/hyperledger/fabric/tls
+      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/msp:/etc/hyperledger/fabric/msp:ro,z
+      - ../crypto-config/peerOrganizations/mno4.example.com/peers/peer0.mno4.example.com/tls:/etc/hyperledger/fabric/tls:ro,z
       - peer0.mno4.example.com:/var/hyperledger/production
     ports:
       - "11051:11051"
@@ -381,10 +383,10 @@ services:
     command: /bin/bash
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:z
-      - ../../chaincode:/opt/gopath/src/github.com/chaincode
-      - ../crypto-config:/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto
-      - ../channel-artifacts:/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts
-      - ../scripts:/opt/gopath/src/github.com/hyperledger/fabric/peer/scripts
+      - ../../chaincode:/opt/gopath/src/github.com/chaincode:z
+      - ../crypto-config:/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto:ro,z
+      - ../channel-artifacts:/opt/gopath/src/github.com/hyperledger/fabric/peer/channel-artifacts:ro,z
+      - ../scripts:/opt/gopath/src/github.com/hyperledger/fabric/peer/scripts:ro,z
     depends_on:
       - orderer.example.com
       - peer0.ncc.example.com

@@ -177,7 +177,8 @@ ccaas_services=(
 for service_spec in "${ccaas_services[@]}"; do
   service="${service_spec%%:*}"
   port="${service_spec##*:}"
-  if docker run --rm --network "${NETWORK_NAME}" alpine sh -c "nc -z -w 3 ${service} ${port}" >/dev/null 2>&1; then
+  if docker exec sim_cli timeout 3 bash -c \
+      'echo > "/dev/tcp/$1/$2"' _ "${service}" "${port}" >/dev/null 2>&1; then
     pass "CCaaS service reachable on ${NETWORK_NAME}: ${service}:${port}"
   else
     fail "CCaaS service is not reachable on ${NETWORK_NAME}: ${service}:${port}"

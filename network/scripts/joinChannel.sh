@@ -30,15 +30,32 @@ echo "[$(date '+%H:%M:%S')] === Joining all peers to channel: ${CHANNEL_NAME} ==
 
 for ORG in NCC MTN Airtel Glo NineMobile; do
   read -r MSPID DOMAIN PEER_HOST PORT <<< "${ORGS[$ORG]}"
-  echo "[$(date '+%H:%M:%S')]   Joining ${ORG} peer (${PEER_HOST}:${PORT})..."
+  echo "[$(date '+%H:%M:%S')]   Checking ${ORG} peer (${PEER_HOST}:${PORT})..."
 
-  CORE_PEER_LOCALMSPID="${MSPID}" \
-  CORE_PEER_ADDRESS="${PEER_HOST}:${PORT}" \
-  CORE_PEER_TLS_ROOTCERT_FILE="${CRYPTO}/peerOrganizations/${DOMAIN}/peers/${PEER_HOST}/tls/ca.crt" \
-  CORE_PEER_MSPCONFIGPATH="${CRYPTO}/peerOrganizations/${DOMAIN}/users/Admin@${DOMAIN}/msp" \
-  peer channel join -b "${CHANNEL_BLOCK}" --tls --cafile "${ORDERER_CA}"
+  local_channels=$(CORE_PEER_LOCALMSPID="${MSPID}" \
+    CORE_PEER_ADDRESS="${PEER_HOST}:${PORT}" \
+    CORE_PEER_TLS_ENABLED=true \
+    CORE_PEER_TLS_ROOTCERT_FILE="${CRYPTO}/peerOrganizations/${DOMAIN}/peers/${PEER_HOST}/tls/ca.crt" \
+    CORE_PEER_MSPCONFIGPATH="${CRYPTO}/peerOrganizations/${DOMAIN}/users/Admin@${DOMAIN}/msp" \
+    peer channel list 2>&1) || {
+      echo "${local_channels}" >&2
+      echo "[ERROR] Could not query channels on ${ORG} peer." >&2
+      exit 1
+    }
 
-  echo "[$(date '+%H:%M:%S')]   ✓ ${ORG} joined"
+  if ! grep -Fq "${CHANNEL_NAME}" <<< "${local_channels}"; then
+    echo "[$(date '+%H:%M:%S')]   Joining ${ORG} peer..."
+    CORE_PEER_LOCALMSPID="${MSPID}" \
+    CORE_PEER_ADDRESS="${PEER_HOST}:${PORT}" \
+    CORE_PEER_TLS_ENABLED=true \
+    CORE_PEER_TLS_ROOTCERT_FILE="${CRYPTO}/peerOrganizations/${DOMAIN}/peers/${PEER_HOST}/tls/ca.crt" \
+    CORE_PEER_MSPCONFIGPATH="${CRYPTO}/peerOrganizations/${DOMAIN}/users/Admin@${DOMAIN}/msp" \
+    peer channel join -b "${CHANNEL_BLOCK}" --tls --cafile "${ORDERER_CA}"
+  else
+    echo "[$(date '+%H:%M:%S')]   ${ORG} already joined."
+  fi
+
+  echo "[$(date '+%H:%M:%S')]   ✓ ${ORG} channel membership ready"
 done
 
 echo "[$(date '+%H:%M:%S')] === joinChannel.sh complete ==="

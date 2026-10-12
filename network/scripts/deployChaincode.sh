@@ -110,15 +110,55 @@ EOF
   log "  ✓ ${CC_NAME} packaged as CCaaS → ${PKG_HOST_PATH}"
 }
 
-# ── Step 2: Install chaincode on all peers ────────────────────────────────────
+# ── Step 2: Calculate package ID and install on all peers ─────────────────────
+calculate_package_id() {
+  local CC_NAME=$1
+  local PKG_ID
+
+  set_cli_peer_env "NCC"
+  PKG_ID=$(docker exec "${CLI_ENV[@]}" "${CLI}" peer lifecycle chaincode calculatepackageid \
+    "${ARTIFACTS_INNER}/${CC_NAME}.tar.gz")
+
+  if [[ ! "${PKG_ID}" =~ ^${CC_NAME}_${CC_VERSION}:[[:xdigit:]]{64}$ ]]; then
+    error "Fabric returned an invalid package ID for ${CC_NAME}: ${PKG_ID}"
+  fi
+  echo "${PKG_ID}"
+}
+
+is_package_installed() {
+  local PKG_ID=$1
+  local INSTALLED_JSON
+
+  if ! INSTALLED_JSON=$(docker exec "${CLI_ENV[@]}" "${CLI}" peer lifecycle chaincode queryinstalled --output json); then
+    return 2
+  fi
+
+  printf '%s\n' "${INSTALLED_JSON}" | python3 -c '
+import json, sys
+try:
+    installed = json.load(sys.stdin).get("installed_chaincodes", [])
+except (json.JSONDecodeError, AttributeError):
+    sys.exit(2)
+sys.exit(0 if any(cc.get("package_id") == sys.argv[1] for cc in installed) else 1)
+' "${PKG_ID}"
+}
+
 install_chaincode() {
   local CC_NAME=$1
+  local PKG_ID=$2
   local PKG_FILE="${ARTIFACTS_INNER}/${CC_NAME}.tar.gz"
-
   for ORG in "${ALL_ORGS[@]}"; do
     log "  Installing ${CC_NAME} on ${ORG} (${PEER_ADDRESS[$ORG]})..."
     set_cli_peer_env "${ORG}"
-    docker exec "${CLI_ENV[@]}" "${CLI}" peer lifecycle chaincode install "${PKG_FILE}"
+    if is_package_installed "${PKG_ID}"; then
+      log "  ${CC_NAME} package already installed on ${ORG}; skipping"
+    else
+      local QUERY_STATUS=$?
+      if [ "${QUERY_STATUS}" -ne 1 ]; then
+        error "Could not check installed packages on ${ORG} before installing ${CC_NAME}"
+      fi
+      docker exec "${CLI_ENV[@]}" "${CLI}" peer lifecycle chaincode install "${PKG_FILE}"
+    fi
     log "  ✓ ${CC_NAME} installed on ${ORG}"
   done
 }
@@ -136,7 +176,9 @@ get_package_id() {
 import sys, json
 data = json.load(sys.stdin)
 for cc in data.get('installed_chaincodes', []):
-  if cc.get('label') == '${CC_LABEL}':
+  references = cc.get('references', {}).get('${CHANNEL_NAME}', {}).get('chaincodes', [])
+  committed = any(item.get('name') == '${CC_NAME}' and item.get('version') == '${CC_VERSION}' for item in references)
+  if cc.get('label') == '${CC_LABEL}' and committed:
         print(cc['package_id'])
         sys.exit(0)
 sys.exit(1)
@@ -158,27 +200,86 @@ is_committed() {
     grep -q "Name: ${CC_NAME},"
 }
 
+ensure_orderer_ready() {
+  local TIMEOUT_SECONDS=120
+  local DEADLINE=$((SECONDS + TIMEOUT_SECONDS))
+  local ORDERER_STATE
+
+  log "  Ensuring Fabric CLI and orderer are running..."
+  ${DOCKER_COMPOSE} \
+    --env-file "${NETWORK_DIR}/docker/.env" \
+    -f "${NETWORK_DIR}/docker/docker-compose.yaml" \
+    up -d orderer.example.com cli
+
+  local CONTAINER
+  local NETWORK_ATTACHED
+  for CONTAINER in orderer.example.com "${CLI}"; do
+    NETWORK_ATTACHED=$(docker inspect \
+      --format '{{with index .NetworkSettings.Networks "sim_net"}}yes{{end}}' \
+      "${CONTAINER}")
+    if [ "${NETWORK_ATTACHED}" != yes ]; then
+      log "  Connecting ${CONTAINER} to sim_net..."
+      docker network connect sim_net "${CONTAINER}"
+    fi
+  done
+
+  log "  Waiting for orderer.example.com:7050 from ${CLI}..."
+  while (( SECONDS < DEADLINE )); do
+    ORDERER_STATE=$(docker inspect --format '{{.State.Status}}' orderer.example.com 2>/dev/null || printf 'unknown')
+    if [ "${ORDERER_STATE}" = exited ] || [ "${ORDERER_STATE}" = dead ]; then
+      log "  ERROR: orderer container stopped during startup (state: ${ORDERER_STATE}) — recent logs:"
+      docker logs orderer.example.com --tail 80 2>&1 || true
+      docker inspect --format '{{json .State}}' orderer.example.com 2>&1 || true
+      return 1
+    fi
+    if [ "${ORDERER_STATE}" = running ] && docker exec "${CLI}" timeout 3 bash -c \
+         'echo > "/dev/tcp/orderer.example.com/7050"' >/dev/null 2>&1; then
+      log "  ✓ orderer.example.com:7050 is reachable from ${CLI}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  log "  ERROR: orderer.example.com:7050 is unreachable after ${TIMEOUT_SECONDS}s."
+  log "  Orderer container state: ${ORDERER_STATE:-unknown}"
+  docker logs orderer.example.com --tail 50 2>&1 || true
+  docker inspect --format '{{json .NetworkSettings.Networks}}' orderer.example.com 2>&1 || true
+  docker inspect --format '{{json .NetworkSettings.Networks}}' "${CLI}" 2>&1 || true
+  return 1
+}
+
 # ── Wait for CCaaS gRPC port ─────────────────────────────────────────────────
-# Polls CC_NAME:PORT from inside sim_net (via a temporary Alpine container)
-# until the TCP port accepts connections or the timeout expires.
+# Polls CC_NAME:PORT from sim_cli until the TCP port accepts connections or
+# the timeout expires, without starting a temporary probe container.
 # This replaces any fixed sleep and prevents smoke tests from firing before
 # the chaincode gRPC server is actually listening.
 wait_for_ccaas_port() {
   local CC_NAME=$1
   local PORT=$2
-  local MAX_ATTEMPTS=60   # 60 × 2 s = up to 2 minutes
+  local TIMEOUT_SECONDS=120
+  local DEADLINE=$((SECONDS + TIMEOUT_SECONDS))
+  local ATTEMPT=0
   log "  Waiting for ${CC_NAME}:${PORT} gRPC to be ready..."
-  for i in $(seq 1 ${MAX_ATTEMPTS}); do
-    if docker run --rm --network sim_net alpine \
-         sh -c "nc -z ${CC_NAME} ${PORT}" 2>/dev/null; then
-      log "  ✓ ${CC_NAME}:${PORT} ready (attempt ${i})"
+  while (( SECONDS < DEADLINE )); do
+    ATTEMPT=$((ATTEMPT + 1))
+    if docker exec sim_cli timeout 3 bash -c \
+         'echo > "/dev/tcp/$1/$2"' _ "${CC_NAME}" "${PORT}" >/dev/null 2>&1; then
+      log "  ✓ ${CC_NAME}:${PORT} ready (attempt ${ATTEMPT})"
       return 0
+    fi
+
+    local CONTAINER_STATE
+    CONTAINER_STATE=$(docker inspect --format '{{.State.Status}}' "${CC_NAME}" 2>/dev/null || printf 'unknown')
+    if [ "${CONTAINER_STATE}" != running ]; then
+      log "  ERROR: ${CC_NAME} container stopped during startup (state: ${CONTAINER_STATE}) — recent logs:"
+      docker logs "${CC_NAME}" --tail 50 2>&1 || true
+      return 1
     fi
     sleep 2
   done
-  log "  ERROR: ${CC_NAME}:${PORT} not ready after $((MAX_ATTEMPTS * 2))s — recent logs:"
-  docker logs "${CC_NAME}" --tail 30 2>&1 || true
-  exit 1
+  log "  ERROR: ${CC_NAME}:${PORT} not ready after ${TIMEOUT_SECONDS}s — recent logs:"
+  docker logs "${CC_NAME}" --tail 50 2>&1 || true
+  return 1
 }
 
 # ── Step 4: Start CCaaS Container ─────────────────────────────────────────────
@@ -186,6 +287,11 @@ start_ccaas_container() {
   local CC_NAME=$1
   local PKG_ID=$2
   local PORT="${CC_PORT[$CC_NAME]}"
+  local CC_HOST_PATH="${CHAINCODE_DIR}/${CC_NAME}"
+
+  if [ ! -f "${CC_HOST_PATH}/go.mod" ]; then
+    error "Chaincode module file not found: ${CC_HOST_PATH}/go.mod"
+  fi
 
   log "  Ensuring vendor directory for ${CC_NAME}..."
   vendor_chaincode "${CC_NAME}"
@@ -198,7 +304,7 @@ start_ccaas_container() {
     -e CHAINCODE_SERVER_ADDRESS="0.0.0.0:${PORT}" \
     -e CHAINCODE_ID="${PKG_ID}" \
     -e CORE_CHAINCODE_ID_NAME="${PKG_ID}" \
-    -v "${CHAINCODE_DIR}/${CC_NAME}:/opt/gopath/src/github.com/chaincode/${CC_NAME}" \
+    -v "${CC_HOST_PATH}:/opt/gopath/src/github.com/chaincode/${CC_NAME}:ro,z" \
     -w "/opt/gopath/src/github.com/chaincode/${CC_NAME}" \
     hyperledger/fabric-ccenv:2.5 \
     go run -mod=vendor .
@@ -297,11 +403,10 @@ deploy_one() {
     return 0
   fi
 
-  package_chaincode     "${CC_NAME}"
-  install_chaincode     "${CC_NAME}"
-
+  package_chaincode "${CC_NAME}"
   local PKG_ID
-  PKG_ID=$(get_package_id "${CC_NAME}")
+  PKG_ID=$(calculate_package_id "${CC_NAME}")
+  install_chaincode "${CC_NAME}" "${PKG_ID}"
   log "  Package ID: ${PKG_ID}"
 
   start_ccaas_container  "${CC_NAME}" "${PKG_ID}"
@@ -316,6 +421,8 @@ main() {
   log "║  Milestone 3 — Chaincode Deployment (CCaaS Lifecycle v2)    ║"
   log "║  Channel: ${CHANNEL_NAME}                                    ║"
   log "╚══════════════════════════════════════════════════════════════╝"
+
+  ensure_orderer_ready
 
   if [ $# -gt 0 ]; then
     local TARGET="$1"

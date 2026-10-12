@@ -2,6 +2,8 @@
 # project/network/scripts/verify_channel_peers.sh
 # Verifies channel membership for all 5 consortium peer nodes.
 
+set -euo pipefail
+
 echo "================================================================================"
 echo "      FABRIC CHANNEL MEMBERSHIP VERIFICATION — SIM REGISTRATION CHANNEL         "
 echo "================================================================================"
@@ -19,12 +21,23 @@ IDX=1
 for ENTRY in "${PEERS[@]}"; do
   IFS="|" read -r NAME HOST MSP DOMAIN <<< "${ENTRY}"
   echo "[${IDX}/5] Checking ${NAME} (${HOST})..."
-  docker exec \
+  CHANNELS=$(docker exec \
     -e CORE_PEER_LOCALMSPID="${MSP}" \
     -e CORE_PEER_ADDRESS="${HOST}" \
+    -e CORE_PEER_TLS_ENABLED=true \
     -e CORE_PEER_TLS_ROOTCERT_FILE="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/${DOMAIN}/peers/${HOST%%:*}/tls/ca.crt" \
     -e CORE_PEER_MSPCONFIGPATH="/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/${DOMAIN}/users/Admin@${DOMAIN}/msp" \
-    sim_cli peer channel list 2>&1 | grep -E "Channels|sim-registration-channel"
+    sim_cli peer channel list 2>&1) || {
+      echo "${CHANNELS}" >&2
+      echo "[ERROR] Could not query channel membership for ${NAME}." >&2
+      exit 1
+    }
+  if ! grep -Fq "sim-registration-channel" <<< "${CHANNELS}"; then
+    echo "[ERROR] ${NAME} has not joined sim-registration-channel." >&2
+    echo "${CHANNELS}" >&2
+    exit 1
+  fi
+  echo "${CHANNELS}" | grep -E "Channels|sim-registration-channel"
   echo ""
   IDX=$((IDX + 1))
 done

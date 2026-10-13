@@ -129,11 +129,15 @@ async function uploadToIPFS(payload, key) {
  * @returns {Promise<object>}
  */
 async function downloadFromIPFS(cid, key) {
-  const client = getIPFSClient();
+  const client = await getIPFSClient();
   const chunks = [];
-  for await (const chunk of client.cat(cid)) {
-    chunks.push(chunk);
-  }
+
+  await withTimeout((async () => {
+    for await (const chunk of client.cat(cid)) {
+      chunks.push(chunk);
+    }
+  })(), 'download');
+
   const envelope = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   return decryptPayload(
     Buffer.from(envelope.data, 'hex'),
@@ -143,4 +147,4 @@ async function downloadFromIPFS(cid, key) {
   );
 }
 
-module.exports = { uploadToIPFS, downloadFromIPFS };
+module.exports = { encryptPayload, decryptPayload, uploadToIPFS, downloadFromIPFS };

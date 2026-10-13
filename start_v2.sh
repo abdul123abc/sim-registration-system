@@ -7,6 +7,7 @@ AUTO_INSTALL="${AUTO_INSTALL:-true}"
 
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
+trap 'log "Interrupted."; exit 130' INT
 
 # Compose requires buildx >= 0.17.0. `docker buildx version` succeeding only
 # proves *some* buildx responded — Amazon Linux's docker package ships an old
@@ -155,14 +156,9 @@ install_linux_prerequisites() {
     # so only request the full package when no curl binary exists at all.
     command -v curl >/dev/null 2>&1 || pkgs+=(curl)
 
-    # docker-compose-plugin is not published in Amazon Linux 2023's default
-    # repos (unlike RHEL/Fedora proper), so only request it there if present.
-    if dnf list docker-compose-plugin >/dev/null 2>&1; then
-      pkgs+=(docker-compose-plugin)
-      "${as_root[@]}" dnf install -y "${pkgs[@]}"
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" dnf install -y "${pkgs[@]}"
+    "${as_root[@]}" dnf install -y "${pkgs[@]}"
+    if ! docker compose version >/dev/null 2>&1; then
+      log 'Docker Compose v2 is not available from the installed packages; installing the plugin manually.'
       install_compose_plugin_manually
     fi
   elif command -v yum >/dev/null 2>&1; then
@@ -179,13 +175,9 @@ install_linux_prerequisites() {
     local pkgs=(docker git ca-certificates)
     command -v curl >/dev/null 2>&1 || pkgs+=(curl)
 
-    # Amazon Linux 2's yum repos don't carry docker-compose-plugin either.
-    if yum list docker-compose-plugin >/dev/null 2>&1; then
-      pkgs+=(docker-compose-plugin)
-      "${as_root[@]}" yum install -y "${pkgs[@]}"
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      "${as_root[@]}" yum install -y "${pkgs[@]}"
+    "${as_root[@]}" yum install -y "${pkgs[@]}"
+    if ! docker compose version >/dev/null 2>&1; then
+      log 'Docker Compose v2 is not available from the installed packages; installing the plugin manually.'
       install_compose_plugin_manually
     fi
   else

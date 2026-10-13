@@ -7,6 +7,7 @@ INSTALL_TOOLCHAIN="${INSTALL_TOOLCHAIN:-true}"   # set false to skip rust/circom
 
 log() { printf '[startup] %s\n' "$*"; }
 fail() { printf '[startup] ERROR: %s\n' "$*" >&2; exit 1; }
+trap 'log "Interrupted."; exit 130' INT
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -150,24 +151,18 @@ install_os_packages() {
     log 'Red Hat/Fedora-family detected. Installing Docker, curl, Git, build tools, Node.js/npm.'
     have curl || pkgs+=(curl)
     pkgs+=(gcc gcc-c++ make nodejs npm)
-    if dnf list docker-compose-plugin >/dev/null 2>&1; then
-      pkgs+=(docker-compose-plugin)
-      as_root dnf install -y "${pkgs[@]}"
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      as_root dnf install -y "${pkgs[@]}"
+    as_root dnf install -y "${pkgs[@]}"
+    if ! docker compose version >/dev/null 2>&1; then
+      log 'Docker Compose v2 is not available from the installed packages; installing the plugin manually.'
       install_compose_plugin_manually
     fi
   elif command -v yum >/dev/null 2>&1; then
     log 'YUM-based Linux detected. Installing Docker, curl, Git, build tools, Node.js/npm.'
     have curl || pkgs+=(curl)
     pkgs+=(gcc gcc-c++ make nodejs npm)
-    if yum list docker-compose-plugin >/dev/null 2>&1; then
-      pkgs+=(docker-compose-plugin)
-      as_root yum install -y "${pkgs[@]}"
-    else
-      log 'docker-compose-plugin package not found in repos (expected on Amazon Linux); installing Compose v2 manually instead.'
-      as_root yum install -y "${pkgs[@]}"
+    as_root yum install -y "${pkgs[@]}"
+    if ! docker compose version >/dev/null 2>&1; then
+      log 'Docker Compose v2 is not available from the installed packages; installing the plugin manually.'
       install_compose_plugin_manually
     fi
   else
